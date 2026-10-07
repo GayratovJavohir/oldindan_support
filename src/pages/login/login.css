@@ -1,0 +1,424 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700;800&family=Onest:wght@400;500;600&display=swap');
+
+.lg {
+    --bg: #0c0809;
+    --panel: #171012;
+    --panel-2: #1e1518;
+    --line: rgba(255, 236, 236, 0.09);
+    --line-2: rgba(255, 236, 236, 0.16);
+    --text: #f6efef;
+    --muted: #a39598;
+    --faint: #6d6064;
+    --red: #e0212f;
+    --red-hi: #ff3b48;
+    --red-deep: #8f1220;
+
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+
+    display: grid;
+    place-items: center;
+
+    min-height: 100vh;
+    padding: 24px;
+
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Onest', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.lg *,
+.lg *::before,
+.lg *::after {
+    box-sizing: border-box;
+}
+
+.lg button,
+.lg input {
+    font: inherit;
+    color: inherit;
+}
+
+/* ---------- background ---------- */
+
+.lg-glow {
+    position: absolute;
+    z-index: -2;
+    border-radius: 50%;
+    filter: blur(90px);
+    opacity: 0.55;
+    animation: lg-float 14s ease-in-out infinite alternate;
+}
+
+.lg-glow--a {
+    width: 520px;
+    height: 520px;
+    top: -160px;
+    right: -120px;
+    background: radial-gradient(circle, var(--red), transparent 70%);
+}
+
+.lg-glow--b {
+    width: 460px;
+    height: 460px;
+    bottom: -180px;
+    left: -140px;
+    background: radial-gradient(circle, var(--red-deep), transparent 70%);
+    animation-delay: -6s;
+}
+
+.lg-grid {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+
+    background-image:
+        linear-gradient(var(--line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 48px 48px;
+
+    mask-image: radial-gradient(ellipse at center, #000 20%, transparent 72%);
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 20%, transparent 72%);
+    opacity: 0.5;
+}
+
+@keyframes lg-float {
+    to {
+        transform: translate(40px, 30px) scale(1.12);
+    }
+}
+
+/* ---------- card ---------- */
+
+.lg-card {
+    width: 100%;
+    max-width: 420px;
+
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+
+    padding: 34px 32px 26px;
+
+    border-radius: 26px;
+    border: 1px solid var(--line-2);
+
+    background: linear-gradient(180deg, rgba(30, 21, 24, 0.82), rgba(18, 12, 14, 0.88));
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+
+    box-shadow:
+        0 40px 100px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+        0 1px 0 rgba(255, 255, 255, 0.07) inset;
+
+    animation: lg-in 0.55s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.lg-card.is-shake {
+    animation: lg-shake 0.42s;
+}
+
+@keyframes lg-in {
+    from {
+        opacity: 0;
+        transform: translateY(18px) scale(0.98);
+    }
+}
+
+@keyframes lg-shake {
+    20% {
+        transform: translateX(-8px);
+    }
+
+    40% {
+        transform: translateX(7px);
+    }
+
+    60% {
+        transform: translateX(-5px);
+    }
+
+    80% {
+        transform: translateX(3px);
+    }
+}
+
+.lg-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.lg-brand__mark {
+    display: grid;
+    place-items: center;
+
+    width: 42px;
+    height: 42px;
+
+    border-radius: 13px;
+
+    font: 800 22px 'Bricolage Grotesque', 'Onest', sans-serif;
+    color: #fff;
+
+    background: radial-gradient(circle at 30% 20%, var(--red-hi), var(--red) 45%, var(--red-deep));
+    box-shadow:
+        0 8px 26px rgba(224, 33, 47, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.lg-brand__word {
+    display: flex;
+    flex-direction: column;
+
+    font: 700 21px/1 'Bricolage Grotesque', 'Onest', sans-serif;
+    letter-spacing: -0.02em;
+}
+
+.lg-brand__word small {
+    margin-top: 4px;
+    font: 500 11px 'Onest', sans-serif;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+}
+
+.lg-head h1 {
+    margin: 8px 0 6px;
+
+    font: 800 30px/1.08 'Bricolage Grotesque', 'Onest', sans-serif;
+    letter-spacing: -0.03em;
+}
+
+.lg-head p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--muted);
+}
+
+/* ---------- error ---------- */
+
+.lg-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+
+    padding: 11px 13px;
+
+    border-radius: 13px;
+    border: 1px solid rgba(224, 33, 47, 0.35);
+
+    font-size: 13.5px;
+    line-height: 1.4;
+    color: #ff9aa2;
+
+    background: rgba(224, 33, 47, 0.12);
+
+    animation: lg-in 0.25s ease-out;
+}
+
+.lg-error svg {
+    flex: none;
+    margin-top: 1px;
+}
+
+/* ---------- fields ---------- */
+
+.lg-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.lg-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+}
+
+.lg-input {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    height: 52px;
+    padding: 0 8px 0 15px;
+
+    border-radius: 15px;
+    border: 1px solid var(--line);
+
+    background: var(--bg);
+    color: var(--faint);
+
+    transition: border-color 0.15s, box-shadow 0.15s, color 0.15s;
+}
+
+.lg-input:focus-within {
+    border-color: rgba(224, 33, 47, 0.65);
+    color: var(--red-hi);
+    box-shadow: 0 0 0 4px rgba(224, 33, 47, 0.12);
+}
+
+.lg-input i {
+    display: grid;
+    flex: none;
+}
+
+.lg-input input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+
+    border: 0;
+    outline: 0;
+    background: none;
+
+    font-size: 15px;
+    color: var(--text);
+}
+
+.lg-input input::placeholder {
+    color: var(--faint);
+}
+
+/* brauzer avtoto'ldirishda oq fon bo'lmasligi uchun */
+.lg-input input:-webkit-autofill {
+    -webkit-text-fill-color: var(--text);
+    caret-color: var(--text);
+    box-shadow: 0 0 0 100px var(--bg) inset;
+    transition: background-color 9999s;
+}
+
+.lg-eye {
+    display: grid;
+    place-items: center;
+
+    width: 38px;
+    height: 38px;
+
+    flex: none;
+
+    border: 0;
+    border-radius: 11px;
+    background: none;
+    cursor: pointer;
+
+    color: var(--muted);
+    transition: background 0.15s, color 0.15s;
+}
+
+.lg-eye:hover {
+    background: var(--panel-2);
+    color: var(--text);
+}
+
+.lg-caps {
+    font-size: 12px;
+    color: #f2b441;
+}
+
+/* ---------- submit ---------- */
+
+.lg-submit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+
+    height: 52px;
+    margin-top: 4px;
+
+    border: 0;
+    border-radius: 15px;
+    cursor: pointer;
+
+    font-size: 15.5px;
+    font-weight: 600;
+    color: #fff;
+
+    background: linear-gradient(180deg, var(--red-hi), var(--red) 55%, var(--red-deep));
+    box-shadow:
+        0 10px 28px rgba(224, 33, 47, 0.38),
+        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+
+    transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+}
+
+.lg-submit:not(:disabled):hover {
+    transform: translateY(-1px);
+    filter: brightness(1.08);
+    box-shadow:
+        0 14px 34px rgba(224, 33, 47, 0.5),
+        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.lg-submit:not(:disabled):active {
+    transform: translateY(0);
+}
+
+.lg-submit:disabled {
+    cursor: not-allowed;
+    color: var(--faint);
+    background: var(--panel-2);
+    box-shadow: none;
+}
+
+.lg-spin {
+    width: 17px;
+    height: 17px;
+
+    border-radius: 50%;
+    border: 2.5px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+
+    animation: lg-rot 0.7s linear infinite;
+}
+
+@keyframes lg-rot {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.lg-foot {
+    margin: 2px 0 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--faint);
+}
+
+.lg :focus-visible {
+    outline: 2px solid var(--red-hi);
+    outline-offset: 2px;
+}
+
+.lg-input input:focus-visible {
+    outline: 0;
+}
+
+@media (max-width: 480px) {
+    .lg {
+        padding: 14px;
+    }
+
+    .lg-card {
+        padding: 26px 20px 20px;
+        border-radius: 22px;
+    }
+
+    .lg-head h1 {
+        font-size: 26px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .lg *,
+    .lg *::before,
+    .lg *::after {
+        animation: none !important;
+        transition: none !important;
+    }
+}
