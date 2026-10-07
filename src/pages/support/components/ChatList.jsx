@@ -32,7 +32,8 @@ export default function ChatList({ chats, activeId, onSelect }) {
         // Django backend maydonlariga moslash (user_name yoki user.name)
         const userName = c.user?.name || c.user_name || c.consumer_name || ''
         const userPhone = c.user?.phone || c.user_phone || c.consumer_phone || ''
-        return `${userName} ${userPhone} ${last}`.toLowerCase().includes(term)
+        const bk = `${c.booking?.title || ''} ${c.booking?.number || c.booking?.id || ''}`
+        return `${userName} ${userPhone} ${bk} ${last}`.toLowerCase().includes(term)
       })
       .sort((a, b) => {
         const rank = { new: 0, open: 1, resolved: 2 }
@@ -50,7 +51,7 @@ export default function ChatList({ chats, activeId, onSelect }) {
         </div>
         <label className="sp-search">
           <IconSearch size={18} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ism, telefon yoki xabar bo'yicha" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ism, telefon, bron yoki xabar bo'yicha" />
         </label>
         <div className="sp-tabs" role="tablist">
           {TABS.map((t) => (
@@ -67,7 +68,7 @@ export default function ChatList({ chats, activeId, onSelect }) {
           const last = lastOf(c)
           const st = STATUS[c.status] || STATUS.new
           const userName = c.user?.name || c.user_name || c.consumer_name || `Murojaat #${c.id}`
-          const unreadCount = c.unread_count ?? c.unread ?? 0
+          const unreadCount = c.unread ?? 0
 
           return (
             <li key={c.id}>
@@ -81,10 +82,18 @@ export default function ChatList({ chats, activeId, onSelect }) {
                   <span className="sp-row__msg">
                     {c.typing
                       ? <em className="sp-row__typing">yozmoqda…</em>
-                      : <>{last?.from === 'agent' && <span className="sp-row__you">Siz: </span>}{last?.text || 'Xabarlar yo‘q'}</>}
+                      : <>{last?.from === 'agent' && <span className="sp-row__you">Siz: </span>}{last?.text || c.subject || 'Xabarlar yo‘q'}</>}
                   </span>
                   <span className="sp-row__meta">
                     <span className={`sp-pill sp-pill--${st.tone}`}>{st.label}</span>
+                    <span className="sp-tag" title="Murojaat raqami">
+                      #{c.ticketId}{c.audience === 'partner' ? ' · Hamkor' : ''}
+                    </span>
+                    {c.booking && (
+                      <span className="sp-tag" title="Bron">
+                        {c.booking.title || `Bron #${c.booking.number || c.booking.id}`}
+                      </span>
+                    )}
                     {c.priority === 'high' && <span className="sp-pill sp-pill--hot">Shoshilinch</span>}
                     {c.tags?.[0] && <span className="sp-tag">{c.tags[0]}</span>}
                     {unreadCount > 0 && <span className="sp-badge">{unreadCount}</span>}

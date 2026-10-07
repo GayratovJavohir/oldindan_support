@@ -106,6 +106,12 @@ export default function ChatWindow({
             ) : (
               <>
                 {userPhone}
+                {chat.booking?.title && (
+                  <>
+                    <i className="sp-dot" />
+                    {chat.booking.title}
+                  </>
+                )}
                 <i className={`sp-dot sp-dot--${st.tone}`} />
                 {st.label}
               </>

@@ -36,9 +36,13 @@ function reducer(state, act) {
       const merged = act.chats.map((inc) => {
         const ex = old.get(inc.id)
         if (!ex) return { ...inc, unread: inc.unread ?? 0 }
+        const d = ex.detail ? derive(mergeSrc(inc.raw, ex.detail), inc.audience, inc.ticketId) : {}
         return {
           ...ex,
           ...inc,
+          ...d,
+          detail: ex.detail,
+          detailKey: ex.detailKey,
           messages: ex.loaded ? ex.messages : inc.messages,
           loaded: ex.loaded,
           typing: ex.typing,
@@ -87,10 +91,19 @@ function reducer(state, act) {
             m.status === current[i].status &&
             m.text === current[i].text,
         )
-      if (same) return state
+      const metaKey = act.meta ? JSON.stringify(act.meta) : null
+      const metaChanged = !!metaKey && metaKey !== chat.detailKey
+      if (same && !metaChanged) return state
 
       return patchChat(state, act.chatId, (c) => ({
         ...c,
+        ...(metaChanged
+          ? {
+            detail: act.meta,
+            detailKey: metaKey,
+            ...derive(mergeSrc(c.raw, act.meta), c.audience, c.ticketId),
+          }
+          : {}),
         loaded: true,
         messages: next,
       }))
@@ -284,11 +297,13 @@ function personName(o) {
   )
 }
 
+const p2 = (n) => String(n).padStart(2, '0')
+
 function fmtDate(v) {
   if (!v) return null
   const d = new Date(v)
   if (Number.isNaN(d.getTime())) return String(v)
-  return d.toLocaleDateString('uz-UZ', { year: 'numeric', month: 'short', day: 'numeric' })
+  return `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()}`
 }
 
 function toTs(v) {
@@ -313,7 +328,184 @@ function resolveAudience(t, fallback) {
     if (v.includes('partner')) return 'partner'
     if (v.includes('consumer') || v.includes('customer') || v.includes('client')) return 'consumer'
   }
+  // ticketning o'zida consumer yoki partner maydoni bo'lsa — shunga qarab
+  const hasC = t.consumer != null || t.consumer_id != null || !!t.consumer_name
+  const hasP = t.partner != null || t.partner_id != null || !!t.partner_name
+  if (hasC && !hasP) return 'consumer'
+  if (hasP && !hasC) return 'partner'
   return fallback
+}
+
+// ---------- consumer / booking ma'lumotlarini backenddan terish ----------
+
+const NESTED_USER_KEYS = [
+  'user', 'consumer', 'partner', 'customer', 'client', 'created_by', 'owner',
+  'author', 'requester', 'contact', 'user_info', 'user_data', 'consumer_info',
+  'customer_info', 'client_info', 'profile',
+]
+const PREFIXES = ['user_', 'consumer_', 'customer_', 'client_', 'partner_']
+
+const okVal = (v) => v !== undefined && v !== null && v !== '' && typeof v !== 'object'
+
+function userScopes(src) {
+  const list = []
+  for (const k of NESTED_USER_KEYS) {
+    const o = src?.[k]
+    if (isObj(o)) {
+      list.push(o)
+      if (isObj(o.profile)) list.push(o.profile)
+    }
+  }
+  return list
+}
+
+// avval ichki user obyektlaridan, keyin tekis maydonlardan (user_phone, consumer_phone, ...)
+function pick(src, names, plain = true) {
+  const scopes = userScopes(src)
+  for (const n of names) {
+    for (const o of scopes) if (okVal(o[n])) return o[n]
+    for (const p of PREFIXES) if (okVal(src?.[p + n])) return src[p + n]
+    if (plain && okVal(src?.[n])) return src[n]
+  }
+  return null
+}
+
+function mergeSrc(raw, meta) {
+  return {
+    ...(raw || {}),
+    ...(isObj(meta?.ticket) ? meta.ticket : {}),
+    ...(meta || {}),
+  }
+}
+
+function fmtDT(v) {
+  if (!v) return null
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return String(v)
+  const dateOnly = typeof v === 'string' && v.length <= 10
+  const date = `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()}`
+  return dateOnly ? date : `${date} ${p2(d.getHours())}:${p2(d.getMinutes())}`
+}
+
+const objTitle = (o) => (isObj(o) ? first(o.name, o.title, o.name_uz, o.name_ru, o.name_en) : null)
+
+function deriveBooking(src) {
+  const cand = [
+    src.booking, src.booking_data, src.booking_info, src.order,
+    src.reservation, src.appointment, src.related_booking,
+    src.booking_detail, src.booking_details,
+  ].find(isObj)
+  const b = cand || {}
+
+  const nestedObjs = [
+    b.venue, b.restaurant, b.place, b.service, b.salon, b.business,
+    b.shop, b.branch, b.hotel, b.room, b.property, b.partner,
+  ].filter(isObj)
+
+  const id = first(
+    cand?.id,
+    src.booking_id,
+    src.order_id,
+    src.reservation_id,
+    typeof src.booking === 'string' || typeof src.booking === 'number' ? src.booking : null,
+  )
+  const number = first(b.number, b.code, b.booking_number, b.public_id, b.reference, src.booking_number)
+  const title = first(
+    b.service_name, b.venue_name, b.restaurant_name, b.place_name, b.title,
+    ...nestedObjs.map(objTitle),
+    src.booking_title, src.branch_name, src.venue_name, src.service_name,
+    src.restaurant_name, src.place_name,
+    cand ? b.name : null,
+  )
+  const date = first(
+    b.date, b.booking_date, b.start_date, b.start_time, b.datetime,
+    b.start_at, b.scheduled_at, b.check_in,
+    src.booking_date, src.booking_datetime, src.booking_start,
+  )
+  const time = first(b.time, b.booking_time, src.booking_time)
+  const guests = first(
+    b.guests, b.guests_count, b.people_count, b.persons, b.party_size, b.seats,
+    src.booking_guests, src.guests_count,
+  )
+  const rawPrice = first(
+    b.total_price, b.total_amount, b.total, b.amount, b.price, b.deposit,
+    src.booking_total, src.booking_price, src.booking_amount,
+  )
+  const address = first(b.address, ...nestedObjs.map((o) => o.address), src.branch_address, src.booking_address)
+  const status = first(b.status, b.state, src.booking_status)
+
+  if (!id && !number && !title && !date) return null
+
+  const dateText = fmtDT(date)
+  return {
+    id: id != null ? String(id) : null,
+    number: number != null ? String(number) : null,
+    title: title != null ? String(title) : null,
+    date: dateText ? (time && String(date).length <= 10 ? `${dateText}, ${time}` : dateText) : time,
+    guests: guests != null && typeof guests !== 'object' ? String(guests) : null,
+    price:
+      rawPrice != null && typeof rawPrice !== 'object'
+        ? `${Number.isFinite(Number(rawPrice)) ? Number(rawPrice).toLocaleString('uz-UZ') : rawPrice} ${b.currency || 'so‘m'}`
+        : null,
+    address: typeof address === 'string' ? address : null,
+    status: status != null && typeof status !== 'object' ? String(status) : null,
+  }
+}
+
+function derive(src, audience, ticketId) {
+  const s = src || {}
+  const fn = pick(s, ['first_name'], false)
+  const ln = pick(s, ['last_name'], false)
+
+  // backend ba'zan consumer: "Ali Valiyev" kabi oddiy matn beradi
+  const strName = NESTED_USER_KEYS.map((k) => s[k]).find(
+    (v) => typeof v === 'string' && v.trim() && Number.isNaN(Number(v)),
+  )
+
+  const name =
+    pick(s, ['full_name', 'fullname', 'display_name']) ||
+    pick(s, ['name', 'username'], false) ||
+    [fn, ln].filter(Boolean).join(' ') ||
+    strName ||
+    pick(s, ['email']) ||
+    `Murojaat #${ticketId}`
+
+  const ownerRef = NESTED_USER_KEYS.map((k) => s[k]).find(
+    (v) => typeof v === 'number' || (typeof v === 'string' && v && !Number.isNaN(Number(v))),
+  )
+  const userId = toId(pick(s, ['id'], false) ?? ownerRef)
+
+  return {
+    userId,
+    user: {
+      name: String(name),
+      phone: String(pick(s, ['phone', 'phone_number', 'mobile', 'msisdn', 'tel', 'telephone']) ?? '—'),
+      email: String(pick(s, ['email']) ?? '—'),
+      orders:
+        pick(s, ['orders_count', 'total_orders', 'bookings_count', 'total_bookings', 'orders']) ?? null,
+      joined:
+        fmtDate(pick(s, ['date_joined', 'joined_at', 'registered_at', 'joined', 'created_at'], false)) ||
+        '—',
+      city: String(pick(s, ['city', 'region']) ?? '—'),
+      lang: String(pick(s, ['language', 'lang']) ?? '—'),
+      device: String(pick(s, ['device', 'device_model']) ?? '—'),
+      os: String(pick(s, ['os', 'platform']) ?? '—'),
+      appVersion: String(pick(s, ['app_version', 'version']) ?? '—'),
+    },
+    booking: deriveBooking(s),
+    info: {
+      ticketNo: `#${ticketId}`,
+      subject: first(s.subject, s.title, s.topic),
+      category: first(
+        typeof s.category === 'string' ? s.category : objTitle(s.category),
+        s.type,
+        s.reason,
+      ),
+      priority: first(s.priority),
+      createdAt: fmtDT(s.created_at),
+      audience,
+    },
+  }
 }
 
 function formatChat(t, fallbackAudience = 'consumer') {
@@ -325,36 +517,8 @@ function formatChat(t, fallbackAudience = 'consumer') {
   const audience = resolveAudience(t, fallbackAudience)
   const id = `${audience}:${ticketId}`
 
-  // user ma'lumotlari turli joyda bo'lishi mumkin: ichki obyekt yoki tekis maydonlar
-  const u =
-    [t.user, t.consumer, t.partner, t.customer, t.client, t.created_by, t.owner, t.author].find(
-      isObj,
-    ) || {}
-  const p = isObj(u.profile) ? u.profile : {}
-
-  const userName =
-    first(
-      t.user_name,
-      t.consumer_name,
-      t.partner_name,
-      t.customer_name,
-      t.client_name,
-      personName(u),
-      t.email,
-    ) || `Murojaat #${ticketId}`
-
-  const rawUserId = first(
-    u.id,
-    t.user_id,
-    t.consumer_id,
-    t.partner_id,
-    t.customer_id,
-    !isObj(t.user) ? t.user : null,
-    !isObj(t.consumer) ? t.consumer : null,
-    !isObj(t.partner) ? t.partner : null,
-  )
-
-  const chatBase = { user: { name: userName }, userId: toId(rawUserId) }
+  const d = derive(t, audience, ticketId)
+  const chatBase = { user: { name: d.user.name }, userId: d.userId }
 
   const messages = Array.isArray(t.messages)
     ? t.messages.map((m) => formatMessage(m, chatBase)).filter(Boolean)
@@ -363,11 +527,13 @@ function formatChat(t, fallbackAudience = 'consumer') {
   // ro'yxatda faqat oxirgi xabar kelsa — preview uchun ishlatamiz
   if (!messages.length && t.last_message) {
     const lm = isObj(t.last_message) ? t.last_message : { text: String(t.last_message) }
-    const m = formatMessage(
-      { created_at: t.last_message_at || t.updated_at, ...lm },
-      chatBase,
-    )
+    const m = formatMessage({ created_at: t.last_message_at || t.updated_at, ...lm }, chatBase)
     if (m) messages.push(m)
+  }
+
+  if (!window.__supportTicketLogged) {
+    window.__supportTicketLogged = true
+    console.info('[support] ticket namunasi (backend raw):', t)
   }
 
   return {
@@ -375,53 +541,16 @@ function formatChat(t, fallbackAudience = 'consumer') {
     id,
     ticketId,
     audience,
-    userId: toId(rawUserId),
-    user: {
-      name: userName,
-      phone:
-        first(
-          t.user_phone,
-          t.consumer_phone,
-          t.partner_phone,
-          t.phone,
-          t.phone_number,
-          u.phone,
-          u.phone_number,
-          u.mobile,
-          p.phone,
-        ) || '—',
-      email: first(t.user_email, u.email, t.email) || '—',
-      orders:
-        first(
-          t.user_orders,
-          t.orders_count,
-          t.total_orders,
-          u.orders_count,
-          u.total_orders,
-          u.orders,
-        ) ?? 0,
-      joined:
-        fmtDate(
-          first(t.user_joined, u.date_joined, u.created_at, u.joined_at, p.created_at),
-        ) || '—',
-      city:
-        first(
-          t.user_city,
-          t.city,
-          u.city,
-          u.region,
-          p.city,
-          isObj(u.address) ? u.address.city : null,
-        ) || '—',
-      lang: first(t.user_lang, t.language, u.language, u.lang, p.language) || '—',
-      device: first(t.user_device, t.device, t.device_model, u.device, u.device_model) || '—',
-      os: first(t.user_os, t.os, t.platform, u.os, u.platform) || '—',
-      appVersion:
-        first(t.user_app_version, t.app_version, u.app_version, u.version) || '—',
-    },
+    raw: t,
+    ...d,
     status: normalizeStatus(t.status),
-    assignee: normalizeAssignee(t.assignee) || normalizeAssignee(t.assigned_to),
+    assignee:
+      normalizeAssignee(t.assignee) ||
+      normalizeAssignee(t.assigned_to) ||
+      first(t.assigned_to_name, t.assignee_name, t.agent_name) ||
+      null,
     unread: first(t.unread_count, t.unread) ?? undefined,
+    unread_count: undefined, // ChatList faqat `unread` ni ishlatsin
     tags: Array.isArray(t.tags) ? t.tags : [],
     lastTs: toTs(first(t.last_message_at, t.updated_at, t.created_at)),
     messages,
@@ -516,11 +645,13 @@ async function loadTicketList(path, audience, signal) {
   const res = await api(path, { signal })
   if (!res.ok) throw new Error(`${path} (${res.status})`)
   const data = await readJson(res)
-  return normalizeList(data)
-    .map((t) => formatChat(t, audience))
-    // partner endpointi bo'lsa audience doim partner
-    .map((c) => (c && audience === 'partner' && c.audience !== 'partner' ? formatChat(c, 'partner') : c))
-    .filter(Boolean)
+  const list = normalizeList(data)
+  window.__ticketListLogged = window.__ticketListLogged || {}
+  if (!window.__ticketListLogged[path]) {
+    window.__ticketListLogged[path] = true
+    console.info(`[support] ${path} raw:`, JSON.stringify(list))
+  }
+  return list.map((t) => formatChat(t, audience)).filter(Boolean)
 }
 
 async function fetchAllTickets(signal) {
@@ -556,6 +687,12 @@ async function fetchMessages(chat, signal) {
   }
 
   const data = await readJson(res)
+  const metaEntries = isObj(data)
+    ? Object.entries(data).filter(
+      ([k, v]) => !Array.isArray(v) && !['count', 'next', 'previous'].includes(k),
+    )
+    : []
+  const meta = metaEntries.length ? Object.fromEntries(metaEntries) : null
   const list = normalizeList(data)
     .map((m) => formatMessage(m, chat))
     .filter(Boolean)
@@ -579,6 +716,7 @@ async function fetchMessages(chat, signal) {
     console.debug('[support] xabar namunasi (raw):', normalizeList(data)[0])
   }
 
+  list.meta = meta
   return list
 }
 
@@ -729,7 +867,7 @@ export default function useSupportChat() {
       busy = true
       try {
         const messages = await fetchMessages(chat, controller.signal)
-        if (alive) dispatch({ type: 'merge_messages', chatId: id, messages })
+        if (alive) dispatch({ type: 'merge_messages', chatId: id, messages, meta: messages.meta })
       } catch (err) {
         if (err.name !== 'AbortError') console.error('Messages poll error:', err)
       } finally {
@@ -762,7 +900,7 @@ export default function useSupportChat() {
 
     try {
       const messages = await fetchMessages(chat)
-      dispatch({ type: 'merge_messages', chatId: id, messages })
+      dispatch({ type: 'merge_messages', chatId: id, messages, meta: messages.meta })
     } catch (err) {
       console.error('Messages fetch error:', err)
     }
