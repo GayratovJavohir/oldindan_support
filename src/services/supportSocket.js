@@ -1,9 +1,20 @@
+<<<<<<< HEAD
 import { getToken } from '../lib/auth'
 
+=======
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 const MAX_FAILED_ATTEMPTS = 5
 // backend rad etgan kodlar: 4001 — auth yo'q, 4003 — ruxsat yo'q (qayta urinish foydasiz)
 const NO_RETRY_CODES = [4001, 4003]
 
+<<<<<<< HEAD
+=======
+const getToken = () =>
+    localStorage.getItem('access_token') ||
+    localStorage.getItem('token') ||
+    ''
+
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 const buildUrl = (url) => {
     const token = getToken()
     if (!token) return url

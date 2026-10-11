@@ -1,8 +1,11 @@
 // src/pages/login/LoginPage.jsx
 import { useState } from 'react'
 import './login.css'
+<<<<<<< HEAD
 import { saveSession } from '../../lib/auth'
 import { LOGIN_URL } from '../../config/env'
+=======
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
 const EyeIcon = ({ off }) =>
     off ? (
@@ -49,7 +52,11 @@ export default function LoginPage({ onLoginSuccess }) {
         setLoading(true)
 
         try {
+<<<<<<< HEAD
             const res = await fetch(LOGIN_URL, {
+=======
+            const res = await fetch('/api/accounts/support/login/', {
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
                 body: JSON.stringify({ email: email.trim(), password }),
@@ -72,7 +79,15 @@ export default function LoginPage({ onLoginSuccess }) {
                 )
             }
 
+<<<<<<< HEAD
             if (!saveSession(data)) throw new Error('Serverdan token kelmadi')
+=======
+            const access = data?.access || data?.access_token || data?.token
+            if (!access) throw new Error('Serverdan token kelmadi')
+
+            localStorage.setItem('access_token', access)
+            if (data.refresh) localStorage.setItem('refresh_token', data.refresh)
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
             onLoginSuccess()
         } catch (err) {

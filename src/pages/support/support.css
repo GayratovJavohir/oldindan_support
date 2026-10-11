@@ -228,6 +228,7 @@
   font-size: 12px;
 }
 
+<<<<<<< HEAD
 .ad-me__info {
   flex: 1;
   min-width: 0;
@@ -260,6 +261,8 @@
   color: var(--red-hi);
 }
 
+=======
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 .ad-main {
   min-width: 0;
   min-height: 0;
@@ -348,10 +351,13 @@
   background: var(--amber);
 }
 
+<<<<<<< HEAD
 .sp-conn--offline i {
   background: var(--red-hi);
 }
 
+=======
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 .sp-conn--connected i {
   background: var(--green);
 
@@ -1553,7 +1559,11 @@
   }
 
   .ad-brand__word small,
+<<<<<<< HEAD
   .ad-me__info {
+=======
+  .ad-me>span:last-child {
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
     display: none;
   }
 
@@ -1831,6 +1841,7 @@
 
   font-size: 13px;
   overflow-wrap: anywhere;
+<<<<<<< HEAD
 }
 
 
@@ -1929,3 +1940,6 @@
 
   color: #fff;
 }
+=======
+}
+>>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
