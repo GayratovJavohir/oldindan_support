@@ -19,5 +19,6 @@ function wsBase() {
   return `${proto}://${window.location.host}/ws/support`
 }
 
-export const buildSupportWsUrl = (ticketId, audience) =>
-  `${wsBase()}/${ticketId}/${audience}/`
+// backend routing.py: ws/support/inbox/  va  ws/support/<conversation_id>/
+export const buildInboxWsUrl = () => `${wsBase()}/inbox/`
+export const buildConversationWsUrl = (conversationId) => `${wsBase()}/${conversationId}/`

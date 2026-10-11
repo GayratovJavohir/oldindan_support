@@ -1,5 +1,3 @@
-// Token va joriy xodim ma'lumotlari — localStorage bilan ishlaydigan yagona joy.
-
 const ACCESS = 'access_token'
 const LEGACY_ACCESS = 'token'
 const REFRESH = 'refresh_token'

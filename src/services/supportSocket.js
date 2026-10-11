@@ -1,8 +1,10 @@
 import { getToken } from '../lib/auth'
 
 const MAX_FAILED_ATTEMPTS = 5
-// backend rad etgan kodlar: 4001 — auth yo'q, 4003 — ruxsat yo'q (qayta urinish foydasiz)
-const NO_RETRY_CODES = [4001, 4003]
+const HEARTBEAT_MS = 25000
+// backend rad etgan kodlar (consumers.py): 4401 — auth yo'q/token eskirgan, 4403 — ruxsat yo'q
+const CODE_UNAUTHORIZED = 4401
+const CODE_FORBIDDEN = 4403
 
 const buildUrl = (url) => {
     const token = getToken()
@@ -11,7 +13,11 @@ const buildUrl = (url) => {
     return `${url}${sep}token=${encodeURIComponent(token)}`
 }
 
-export function createSupportSocket({ url, onEvent, onStatus }) {
+/**
+ * onUnauthorized: async () => boolean — 4401 da tokenni yangilashga urinadi
+ * (true qaytarsa darhol qayta ulanadi; ketma-ket xato uchun faqat bir marta).
+ */
+export function createSupportSocket({ url, onEvent, onStatus, onUnauthorized }) {
     if (!url) {
         onStatus?.('disabled')
         return { send() { }, close() { } }
@@ -21,7 +27,14 @@ export function createSupportSocket({ url, onEvent, onStatus }) {
     let closed = false
     let retry = 0
     let failures = 0
+    let authTried = false
     let timer = null
+    let heartbeat = null
+
+    const stopHeartbeat = () => {
+        clearInterval(heartbeat)
+        heartbeat = null
+    }
 
     const scheduleReconnect = () => {
         if (closed) return
@@ -56,7 +69,12 @@ export function createSupportSocket({ url, onEvent, onStatus }) {
         socket.onopen = () => {
             retry = 0
             failures = 0
+            authTried = false
             onStatus?.('connected')
+            stopHeartbeat()
+            heartbeat = setInterval(() => {
+                if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ action: 'ping' }))
+            }, HEARTBEAT_MS)
         }
 
         socket.onmessage = (event) => {
@@ -67,13 +85,31 @@ export function createSupportSocket({ url, onEvent, onStatus }) {
             }
         }
 
-        socket.onclose = (event) => {
+        socket.onclose = async (event) => {
             if (ws !== socket) return
-            if (NO_RETRY_CODES.includes(event.code)) {
-                console.warn('[supportSocket] Backend rad etdi, code =', event.code)
+            stopHeartbeat()
+
+            if (event.code === CODE_FORBIDDEN) {
+                console.warn('[supportSocket] Ruxsat yo‘q (4403)')
                 onStatus?.('disabled')
                 return
             }
+
+            if (event.code === CODE_UNAUTHORIZED) {
+                if (onUnauthorized && !authTried) {
+                    authTried = true
+                    const ok = await onUnauthorized().catch(() => false)
+                    if (closed || ws !== socket) return
+                    if (ok) {
+                        timer = setTimeout(connect, 0)
+                        return
+                    }
+                }
+                console.warn('[supportSocket] Auth rad etildi (4401)')
+                onStatus?.('disabled')
+                return
+            }
+
             scheduleReconnect()
         }
 
@@ -92,6 +128,7 @@ export function createSupportSocket({ url, onEvent, onStatus }) {
         close() {
             closed = true
             clearTimeout(timer)
+            stopHeartbeat()
 
             const socket = ws
             ws = null

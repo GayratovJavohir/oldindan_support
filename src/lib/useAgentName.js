@@ -6,7 +6,6 @@ const subscribe = (cb) => {
   return () => window.removeEventListener(AGENT_EVENT, cb)
 }
 
-// Joriy xodim ismi (login javobidan yoki unga biriktirilgan ticketlardan)
 export default function useAgentName() {
   return useSyncExternalStore(subscribe, getAgentName, getAgentName)
 }

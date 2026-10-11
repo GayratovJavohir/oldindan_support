@@ -6,18 +6,18 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: 'https://assessing-michelle-pharmaceutical-snapshot.trycloudflare.com',
         changeOrigin: true,
         secure: false,
       },
       '/accounts': {
-        target: 'http://127.0.0.1:8000',
+        target: 'https://assessing-michelle-pharmaceutical-snapshot.trycloudflare.com',
         changeOrigin: true,
         secure: false,
       },
       // Django Channels: /ws/support/<ticket_id>/<audience>/
       '/ws': {
-        target: 'ws://127.0.0.1:8000',
+        target: 'https://assessing-michelle-pharmaceutical-snapshot.trycloudflare.com',
         ws: true,
         changeOrigin: true,
         secure: false,

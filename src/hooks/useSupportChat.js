@@ -1,113 +1,202 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { createSupportSocket } from '../services/supportSocket'
-import { SUPPORT_API, buildSupportWsUrl } from '../config/env'
+import { SUPPORT_API, buildConversationWsUrl, buildInboxWsUrl } from '../config/env'
 import { getAgentName, getUserId, setAgentName } from '../lib/auth'
-import { http, readJson } from '../lib/http'
+import { http, readJson, refreshAccess } from '../lib/http'
 
-const POLL_LIST_MS = 5000 // ticketlar ro'yxati
-const POLL_MESSAGES_MS = 2500 // ochiq chatdagi xabarlar
+/*
+ * Backend (support app):
+ *   REST  /api/support/conversations/                     (sahifalangan: page, page_size)
+ *         /api/support/conversations/<id>/messages/       (cursor, eng yangisi birinchi)
+ *         /api/support/conversations/<id>/messages/send/  {text, internal, booking_id}
+ *         /api/support/conversations/<id>/{close,reopen,claim,transfer}/
+ *         /api/support/conversations/<id>/bookings/
+ *         /api/support/agents/
+ *   WS    /ws/support/inbox/        -> inbox_update, assigned_to_you
+ *         /ws/support/<id>/         -> message, conversation, read, error, pong
+ *
+ * UI holati: closed -> 'resolved'; open + mas'ulsiz -> 'new'; open + mas'ul bor -> 'open'.
+ */
 
-const init = () => ({ chats: [], activeId: null, loading: true })
+const POLL_LIST_MS = 5000 // WS yo'q bo'lsa ro'yxat yangilanishi (WS bor bo'lsa — kamdan-kam)
+const POLL_MESSAGES_MS = 4000 // faqat suhbat WS'i ulanmagan bo'lsa
+const LIST_PAGE_SIZE = 100
+const LIST_MAX_PAGES = 5
+const NOTICE_MS = 5000
 
 const toId = (v) => (v == null ? null : String(v))
+const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v)
 
-const first = (...vals) =>
-  vals.find((v) => v !== undefined && v !== null && v !== '') ?? null
+function toTs(v) {
+  if (!v) return 0
+  if (typeof v === 'number') return v < 1e12 ? v * 1000 : v
+  const n = new Date(v).getTime()
+  return Number.isFinite(n) ? n : 0
+}
+
+// DRF xato javobidan (ichma-ich ham) o'qiladigan matn
+function errorText(data, fallback) {
+  const out = []
+  const walk = (v) => {
+    if (v == null) return
+    if (typeof v === 'string') out.push(v)
+    else if (Array.isArray(v)) v.forEach(walk)
+    else if (isObj(v)) Object.values(v).forEach(walk)
+  }
+  walk(data)
+  return out.length ? out.join(' ') : fallback
+}
+
+function listOf(data) {
+  if (!data) return []
+  if (Array.isArray(data)) return data
+  if (Array.isArray(data.results)) return data.results
+  return []
+}
+
+// CursorPagination `next` URL'idan faqat cursor qiymatini olamiz (host proxy orqali o'zgargan bo'lishi mumkin)
+function cursorOf(nextUrl) {
+  if (!nextUrl) return null
+  try {
+    return new URL(nextUrl, window.location.origin).searchParams.get('cursor')
+  } catch {
+    return null
+  }
+}
+
+// ---------- normalizers ----------
+
+const KIND_FROM = { user: 'user', agent: 'agent', internal: 'agent', system: 'system' }
+
+function formatMessage(m) {
+  const id = toId(m?.id)
+  if (!id) return null
+  const kind = m.kind || 'agent'
+  return {
+    id,
+    kind,
+    from: KIND_FROM[kind] || 'agent',
+    internal: kind === 'internal',
+    senderName: m.sender_name || null,
+    text: m.content ?? '',
+    ts: toTs(m.created_at) || Date.now(),
+    // agent xabari uchun is_read = user o'qigan
+    status: m.is_read ? 'read' : 'sent',
+    booking: m.booking != null ? { id: toId(m.booking), branch: m.branch_name || null } : null,
+  }
+}
+
+function formatChat(c) {
+  const id = toId(c?.id)
+  if (!id) return null
+
+  const u = isObj(c.user) ? c.user : {}
+  const a = isObj(c.assigned_to) ? c.assigned_to : null
+  const assigneeId = a ? toId(a.id) : null
+  const lm = isObj(c.last_message) ? c.last_message : null
+
+  return {
+    id,
+    user: {
+      id: toId(u.id),
+      name: u.full_name || u.phone || u.email || `Suhbat #${id}`,
+      phone: u.phone || null,
+      email: u.email || null,
+      role: u.role || null,
+    },
+    status: c.status === 'closed' ? 'resolved' : assigneeId ? 'open' : 'new',
+    assignee: a ? a.full_name || `Xodim #${assigneeId}` : null,
+    assigneeId,
+    closedBy: isObj(c.closed_by) ? c.closed_by.full_name || null : null,
+    closedAt: c.closed_at || null,
+    createdAt: c.created_at || null,
+    unread: c.unread_count ?? 0,
+    lastTs: toTs(c.last_message_at) || toTs(c.updated_at) || toTs(c.created_at),
+    preview: lm
+      ? {
+        from: KIND_FROM[lm.kind] || 'agent',
+        internal: lm.kind === 'internal',
+        text: lm.content || '',
+        ts: toTs(lm.created_at),
+      }
+      : null,
+  }
+}
+
+// ---------- reducer ----------
+
+const init = () => ({ chats: [], activeId: null, loading: true })
 
 const patchChat = (state, id, fn) => ({
   ...state,
   chats: state.chats.map((c) => (c.id === id ? fn(c) : c)),
 })
 
-// ---------- reducer ----------
+const cmp = (a, b) => a.ts - b.ts || (Number(a.id) || 0) - (Number(b.id) || 0)
+const isTmp = (m) => String(m.id).startsWith('tmp_')
+
+// serverdagi xabarlar + oldin yuklanganlar + hali yuborilayotgan lokal xabarlar
+function combine(current, server) {
+  const byId = new Map(current.filter((m) => !isTmp(m)).map((m) => [m.id, m]))
+  for (const m of server) byId.set(m.id, m)
+  const tmps = current.filter(
+    (m) =>
+      isTmp(m) &&
+      !server.some(
+        (s) =>
+          s.from === 'agent' &&
+          s.internal === m.internal &&
+          s.text === m.text &&
+          Math.abs(s.ts - m.ts) < 120000,
+      ),
+  )
+  return [...byId.values(), ...tmps].sort(cmp)
+}
+
+function mergeSummary(state, inc) {
+  const unread = state.activeId === inc.id ? 0 : inc.unread
+  const ex = state.chats.find((c) => c.id === inc.id)
+  if (!ex) {
+    return {
+      ...state,
+      chats: [
+        { ...inc, unread, messages: [], loaded: false, nextCursor: null, bookings: null },
+        ...state.chats,
+      ],
+    }
+  }
+  return patchChat(state, inc.id, (c) => ({ ...c, ...inc, unread }))
+}
 
 function reducer(state, act) {
   switch (act.type) {
-    case 'set_initial_chats':
-      return {
-        ...state,
-        chats: act.chats.map((c) => ({ ...c, unread: c.unread ?? 0 })),
-        loading: false,
-      }
-
-    // polling: ro'yxatni yangilaydi, ochilgan xabarlarni saqlab qoladi
-    case 'merge_chats': {
-      const old = new Map(state.chats.map((c) => [c.id, c]))
-      const merged = act.chats.map((inc) => {
-        const ex = old.get(inc.id)
-        if (!ex) return { ...inc, unread: inc.unread ?? 0 }
-        const d = ex.detail ? derive(mergeSrc(inc.raw, ex.detail), inc.audience, inc.ticketId) : {}
-        return {
-          ...ex,
-          ...inc,
-          ...d,
-          detail: ex.detail,
-          detailKey: ex.detailKey,
-          messages: ex.loaded ? ex.messages : inc.messages,
-          loaded: ex.loaded,
-          typing: ex.typing,
-          unread: state.activeId === inc.id ? 0 : inc.unread ?? ex.unread ?? 0,
-        }
-      })
-      // ro'yxatda yo'q, lekin lokal (WS orqali kelgan) chatlarni yo'qotmaymiz
-      const ids = new Set(merged.map((c) => c.id))
-      const extra = state.chats.filter((c) => !ids.has(c.id))
-      return { ...state, chats: [...merged, ...extra], loading: false }
+    // ro'yxat (birinchi yuklash va polling): mavjud xabarlarni saqlab qoladi
+    case 'chats': {
+      let s = state
+      for (const c of act.chats) s = mergeSummary(s, c)
+      return { ...s, loading: false }
     }
+
+    // WS (inbox_update / conversation) va amal javoblari
+    case 'summary':
+      return mergeSummary(state, act.chat)
 
     case 'set_messages':
       return patchChat(state, act.chatId, (c) => ({
         ...c,
         loaded: true,
-        messages: act.messages,
+        messages: combine(c.messages || [], act.messages),
+        // keyingi (eski) sahifa kursori faqat birinchi yuklashda olinadi
+        nextCursor: c.loaded ? c.nextCursor : act.nextCursor,
       }))
 
-    // polling: serverdagi xabarlar + hali yuborilayotgan lokal xabarlar
-    case 'merge_messages': {
-      const chat = state.chats.find((c) => c.id === act.chatId)
-      if (!chat) return state
-
-      const server = act.messages
-      const ids = new Set(server.map((m) => m.id))
-      const current = chat.messages || []
-
-      const pending = current.filter((m) => {
-        const id = String(m.id)
-        if (id.startsWith('sys_')) return true
-        if (!id.startsWith('tmp_')) return false
-        if (ids.has(m.id)) return false
-        return !server.some(
-          (s) => s.from === 'agent' && s.text === m.text && Math.abs(s.ts - m.ts) < 120000,
-        )
-      })
-
-      const next = [...server, ...pending].sort((a, b) => a.ts - b.ts)
-      const same =
-        chat.loaded &&
-        next.length === current.length &&
-        next.every(
-          (m, i) =>
-            m.id === current[i].id &&
-            m.status === current[i].status &&
-            m.text === current[i].text,
-        )
-      const metaKey = act.meta ? JSON.stringify(act.meta) : null
-      const metaChanged = !!metaKey && metaKey !== chat.detailKey
-      if (same && !metaChanged) return state
-
+    case 'prepend_messages':
       return patchChat(state, act.chatId, (c) => ({
         ...c,
-        ...(metaChanged
-          ? {
-            detail: act.meta,
-            detailKey: metaKey,
-            ...derive(mergeSrc(c.raw, act.meta), c.audience, c.ticketId),
-          }
-          : {}),
-        loaded: true,
-        messages: next,
+        messages: combine(c.messages || [], act.messages),
+        nextCursor: act.nextCursor,
+        loadingOlder: false,
       }))
-    }
 
     case 'select':
       return {
@@ -115,35 +204,22 @@ function reducer(state, act) {
         activeId: act.id,
       }
 
-    case 'incoming': {
-      const msg = act.message
-      if (!msg) return state
-      const fromAgent = msg.from === 'agent'
-
+    // suhbat WS'idan yangi xabar
+    case 'incoming':
       return patchChat(state, act.chatId, (c) => {
-        if (msg.id && (c.messages || []).some((m) => m.id === msg.id)) return c
-
-        return {
-          ...c,
-          typing: false,
-          unread: fromAgent
-            ? c.unread || 0
-            : state.activeId === c.id
-              ? 0
-              : (c.unread || 0) + 1,
-          status: !fromAgent && c.status === 'resolved' ? 'new' : c.status,
-          messages: [...(c.messages || []), msg],
-        }
+        const list = c.messages || []
+        if (list.some((m) => m.id === act.message.id)) return c
+        return { ...c, messages: combine(list, [act.message]) }
       })
-    }
 
-    case 'newChat':
-      return state.chats.some((c) => c.id === act.chat.id)
-        ? state
-        : { ...state, chats: [act.chat, ...state.chats] }
-
-    case 'typing':
-      return patchChat(state, act.chatId, (c) => ({ ...c, typing: act.typing }))
+    // user agent xabarlarini o'qidi
+    case 'read_by_user':
+      return patchChat(state, act.chatId, (c) => ({
+        ...c,
+        messages: (c.messages || []).map((m) =>
+          m.kind === 'agent' && m.status !== 'read' ? { ...m, status: 'read' } : m,
+        ),
+      }))
 
     case 'send':
       return patchChat(state, act.chatId, (c) => ({
@@ -151,29 +227,16 @@ function reducer(state, act) {
         messages: [...(c.messages || []), act.message],
       }))
 
-    case 'patch':
-      return patchChat(state, act.chatId, (c) => ({ ...c, ...act.patch }))
-
-    case 'remove_message':
-      return patchChat(state, act.chatId, (c) => ({
-        ...c,
-        messages: (c.messages || []).filter((m) => m.id !== act.messageId),
-      }))
-
     case 'replace':
       return patchChat(state, act.chatId, (c) => {
         const list = c.messages || []
-        // polling real xabarni allaqachon olib kelgan bo'lsa — vaqtinchalikni olib tashlaymiz
+        // WS real xabarni allaqachon olib kelgan bo'lsa — vaqtinchalikni olib tashlaymiz
         if (list.some((m) => m.id === act.message.id)) {
           return { ...c, messages: list.filter((m) => m.id !== act.tempId) }
         }
         return {
           ...c,
-          messages: list.map((m) =>
-            m.id === act.tempId
-              ? { ...act.message, status: act.message.status || 'delivered' }
-              : m,
-          ),
+          messages: list.map((m) => (m.id === act.tempId ? act.message : m)).sort(cmp),
         }
       })
 
@@ -185,519 +248,64 @@ function reducer(state, act) {
         ),
       }))
 
-    // faqat server tasdiqlagandan keyin chaqiriladi
-    case 'status':
+    case 'remove_message':
       return patchChat(state, act.chatId, (c) => ({
         ...c,
-        status: act.status,
-        assignee: act.assignee ?? c.assignee,
-        messages: [
-          ...(c.messages || []),
-          {
-            id: `sys_${Date.now()}`,
-            from: 'system',
-            ts: Date.now(),
-            text:
-              act.status === 'resolved'
-                ? `Murojaat hal qilindi — ${act.by}`
-                : c.status === 'resolved'
-                  ? `Murojaat qayta ochildi — ${act.by}`
-                  : `Murojaatni ${act.by} qabul qildi`,
-          },
-        ],
+        messages: (c.messages || []).filter((m) => m.id !== act.messageId),
       }))
+
+    case 'patch':
+      return patchChat(state, act.chatId, (c) => ({ ...c, ...act.patch }))
 
     default:
       return state
   }
 }
 
-// ---------- API helpers ----------
+// ---------- API ----------
 
 const api = (path, options) => http(`${SUPPORT_API}${path}`, options)
 
-function normalizeList(data) {
-  if (!data) return []
-  if (Array.isArray(data)) return data
-  for (const key of ['results', 'data', 'messages', 'items', 'tickets']) {
-    if (Array.isArray(data[key])) return data[key]
+async function fetchConversations(signal, all) {
+  const out = []
+  for (let page = 1; page <= (all ? LIST_MAX_PAGES : 1); page += 1) {
+    const res = await api(`/conversations/?page_size=${LIST_PAGE_SIZE}&page=${page}`, { signal })
+    if (!res.ok) throw new Error(`conversations (${res.status})`)
+    const data = await readJson(res)
+    out.push(...listOf(data).map(formatChat).filter(Boolean))
+    if (!data?.next) break
   }
-  if (data.data && typeof data.data === 'object') return normalizeList(data.data)
-  return []
+  return out
 }
 
-// ---------- normalizers ----------
-
-const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v)
-
-function normalizeAssignee(a) {
-  if (!a) return null
-  if (typeof a === 'string') return a
-  if (isObj(a)) {
-    return (
-      first(
-        a.full_name,
-        [a.first_name, a.last_name].filter(Boolean).join(' '),
-        a.name,
-        a.username,
-        a.email,
-      ) || null
-    )
-  }
-  return null
-}
-
-// Backend: open | in_progress | resolved.
-// Hech kim biriktirilmagan `open` ticket — "Yangi"; biriktirilgan yoki in_progress — "Jarayonda".
-function normalizeStatus(s, hasAssignee = true) {
-  const v = String(s || 'open').toLowerCase()
-  if (['resolved', 'closed', 'done', 'solved'].includes(v)) return 'resolved'
-  if (['in_progress', 'assigned', 'processing'].includes(v)) return 'open'
-  if (['open', 'opened', 'new', 'pending', 'created', 'waiting'].includes(v)) {
-    return hasAssignee ? 'open' : 'new'
-  }
-  return v
-}
-
-function personName(o) {
-  if (!isObj(o)) return null
-  return (
-    first(
-      o.full_name,
-      [o.first_name, o.last_name].filter(Boolean).join(' ') || null,
-      o.name,
-      o.business_name,
-      o.company_name,
-      o.store_name,
-      o.shop_name,
-      o.username,
-      o.email,
-    ) || null
-  )
-}
-
-const p2 = (n) => String(n).padStart(2, '0')
-
-function fmtDate(v) {
-  if (!v) return null
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) return String(v)
-  return `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()}`
-}
-
-function toTs(v) {
-  if (!v) return 0
-  if (typeof v === 'number') return v < 1e12 ? v * 1000 : v
-  const n = new Date(v).getTime()
-  return Number.isFinite(n) ? n : 0
-}
-
-function resolveAudience(t, fallback) {
-  const raw = first(
-    t.audience,
-    t.audience_type,
-    t.ticket_type,
-    t.user_type,
-    t.source,
-    t.kind,
-    t.target,
-  )
-  if (typeof raw === 'string') {
-    const v = raw.toLowerCase()
-    if (v.includes('partner')) return 'partner'
-    if (v.includes('consumer') || v.includes('customer') || v.includes('client')) return 'consumer'
-  }
-  // ticketning o'zida consumer yoki partner maydoni bo'lsa — shunga qarab
-  const hasC = t.consumer != null || t.consumer_id != null || !!t.consumer_name
-  const hasP = t.partner != null || t.partner_id != null || !!t.partner_name
-  if (hasC && !hasP) return 'consumer'
-  if (hasP && !hasC) return 'partner'
-  return fallback
-}
-
-// ---------- consumer / booking ma'lumotlarini backenddan terish ----------
-
-const NESTED_USER_KEYS = [
-  'user', 'consumer', 'partner', 'customer', 'client', 'created_by', 'owner',
-  'author', 'requester', 'contact', 'user_info', 'user_data', 'consumer_info',
-  'customer_info', 'client_info', 'profile',
-]
-const PREFIXES = ['user_', 'consumer_', 'customer_', 'client_', 'partner_']
-
-const okVal = (v) => v !== undefined && v !== null && v !== '' && typeof v !== 'object'
-
-function userScopes(src) {
-  const list = []
-  for (const k of NESTED_USER_KEYS) {
-    const o = src?.[k]
-    if (isObj(o)) {
-      list.push(o)
-      if (isObj(o.profile)) list.push(o.profile)
-    }
-  }
-  return list
-}
-
-// avval ichki user obyektlaridan, keyin tekis maydonlardan (user_phone, consumer_phone, ...)
-function pick(src, names, plain = true) {
-  const scopes = userScopes(src)
-  for (const n of names) {
-    for (const o of scopes) if (okVal(o[n])) return o[n]
-    for (const p of PREFIXES) if (okVal(src?.[p + n])) return src[p + n]
-    if (plain && okVal(src?.[n])) return src[n]
-  }
-  return null
-}
-
-function mergeSrc(raw, meta) {
-  return {
-    ...(raw || {}),
-    ...(isObj(meta?.ticket) ? meta.ticket : {}),
-    ...(meta || {}),
-  }
-}
-
-function fmtDT(v) {
-  if (!v) return null
-  const d = new Date(v)
-  if (Number.isNaN(d.getTime())) return String(v)
-  const dateOnly = typeof v === 'string' && v.length <= 10
-  const date = `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()}`
-  return dateOnly ? date : `${date} ${p2(d.getHours())}:${p2(d.getMinutes())}`
-}
-
-const objTitle = (o) => (isObj(o) ? first(o.name, o.title, o.name_uz, o.name_ru, o.name_en) : null)
-
-function deriveBooking(src) {
-  const cand = [
-    src.booking, src.booking_data, src.booking_info, src.order,
-    src.reservation, src.appointment, src.related_booking,
-    src.booking_detail, src.booking_details,
-  ].find(isObj)
-  const b = cand || {}
-
-  const nestedObjs = [
-    b.venue, b.restaurant, b.place, b.service, b.salon, b.business,
-    b.shop, b.branch, b.hotel, b.room, b.property, b.partner,
-  ].filter(isObj)
-
-  const id = first(
-    cand?.id,
-    src.booking_id,
-    src.order_id,
-    src.reservation_id,
-    typeof src.booking === 'string' || typeof src.booking === 'number' ? src.booking : null,
-  )
-  const number = first(b.number, b.code, b.booking_number, b.public_id, b.reference, src.booking_number)
-  const title = first(
-    b.service_name, b.venue_name, b.restaurant_name, b.place_name, b.title,
-    ...nestedObjs.map(objTitle),
-    src.booking_title, src.branch_name, src.venue_name, src.service_name,
-    src.restaurant_name, src.place_name,
-    cand ? b.name : null,
-  )
-  const date = first(
-    b.date, b.booking_date, b.start_date, b.start_time, b.datetime,
-    b.start_at, b.scheduled_at, b.check_in,
-    src.booking_date, src.booking_datetime, src.booking_start,
-  )
-  const time = first(b.time, b.booking_time, src.booking_time)
-  const guests = first(
-    b.guests, b.guests_count, b.people_count, b.persons, b.party_size, b.seats,
-    src.booking_guests, src.guests_count,
-  )
-  const rawPrice = first(
-    b.total_price, b.total_amount, b.total, b.amount, b.price, b.deposit,
-    src.booking_total, src.booking_price, src.booking_amount,
-  )
-  const address = first(b.address, ...nestedObjs.map((o) => o.address), src.branch_address, src.booking_address)
-  const status = first(b.status, b.state, src.booking_status)
-
-  if (!id && !number && !title && !date) return null
-
-  const dateText = fmtDT(date)
-  return {
-    id: id != null ? String(id) : null,
-    number: number != null ? String(number) : null,
-    title: title != null ? String(title) : null,
-    date: dateText ? (time && String(date).length <= 10 ? `${dateText}, ${time}` : dateText) : time,
-    guests: guests != null && typeof guests !== 'object' ? String(guests) : null,
-    price:
-      rawPrice != null && typeof rawPrice !== 'object'
-        ? `${Number.isFinite(Number(rawPrice)) ? Number(rawPrice).toLocaleString('uz-UZ') : rawPrice} ${b.currency || 'so‘m'}`
-        : null,
-    address: typeof address === 'string' ? address : null,
-    status: status != null && typeof status !== 'object' ? String(status) : null,
-  }
-}
-
-function derive(src, audience, ticketId) {
-  const s = src || {}
-  const fn = pick(s, ['first_name'], false)
-  const ln = pick(s, ['last_name'], false)
-
-  // backend ba'zan consumer: "Ali Valiyev" kabi oddiy matn beradi
-  const strName = NESTED_USER_KEYS.map((k) => s[k]).find(
-    (v) => typeof v === 'string' && v.trim() && Number.isNaN(Number(v)),
-  )
-
-  const name =
-    pick(s, ['full_name', 'fullname', 'display_name']) ||
-    pick(s, ['name', 'username'], false) ||
-    [fn, ln].filter(Boolean).join(' ') ||
-    strName ||
-    pick(s, ['email']) ||
-    `Murojaat #${ticketId}`
-
-  const ownerRef = NESTED_USER_KEYS.map((k) => s[k]).find(
-    (v) => typeof v === 'number' || (typeof v === 'string' && v && !Number.isNaN(Number(v))),
-  )
-  const userId = toId(pick(s, ['id'], false) ?? ownerRef)
-
-  return {
-    userId,
-    user: {
-      name: String(name),
-      phone: String(pick(s, ['phone', 'phone_number', 'mobile', 'msisdn', 'tel', 'telephone']) ?? '—'),
-      email: String(pick(s, ['email']) ?? '—'),
-      orders:
-        pick(s, ['orders_count', 'total_orders', 'bookings_count', 'total_bookings', 'orders']) ?? null,
-      joined:
-        fmtDate(pick(s, ['date_joined', 'joined_at', 'registered_at', 'joined', 'created_at'], false)) ||
-        '—',
-      city: String(pick(s, ['city', 'region']) ?? '—'),
-      lang: String(pick(s, ['language', 'lang']) ?? '—'),
-      device: String(pick(s, ['device', 'device_model']) ?? '—'),
-      os: String(pick(s, ['os', 'platform']) ?? '—'),
-      appVersion: String(pick(s, ['app_version', 'version']) ?? '—'),
-    },
-    booking: deriveBooking(s),
-    info: {
-      ticketNo: `#${ticketId}`,
-      subject: first(s.subject, s.title, s.topic),
-      category: first(
-        typeof s.category === 'string' ? s.category : objTitle(s.category),
-        s.type,
-        s.reason,
-      ),
-      priority: first(s.priority),
-      createdAt: fmtDT(s.created_at),
-      audience,
-    },
-  }
-}
-
-function formatChat(t, fallbackAudience = 'consumer') {
-  if (!t) return null
-
-  const ticketId = toId(first(t.id, t.pk, t.ticket_id))
-  if (!ticketId) return null
-
-  const audience = resolveAudience(t, fallbackAudience)
-  const id = `${audience}:${ticketId}`
-
-  const d = derive(t, audience, ticketId)
-  const chatBase = { user: { name: d.user.name }, userId: d.userId }
-
-  const messages = Array.isArray(t.messages)
-    ? t.messages.map((m) => formatMessage(m, chatBase)).filter(Boolean)
-    : []
-
-  // ro'yxatda faqat oxirgi xabar kelsa — preview uchun ishlatamiz
-  if (!messages.length && t.last_message) {
-    const lm = isObj(t.last_message) ? t.last_message : { text: String(t.last_message) }
-    const m = formatMessage({ created_at: t.last_message_at || t.updated_at, ...lm }, chatBase)
-    if (m) messages.push(m)
-  }
-
-  const assignee =
-    normalizeAssignee(t.assignee) ||
-    normalizeAssignee(t.assigned_to) ||
-    first(t.assigned_to_name, t.assignee_name, t.agent_name) ||
-    null
-
-  return {
-    ...t,
-    id,
-    ticketId,
-    audience,
-    raw: t,
-    ...d,
-    status: normalizeStatus(t.status, !!(assignee || t.assigned_to)),
-    assignee,
-    unread: first(t.unread_count, t.unread) ?? undefined,
-    unread_count: undefined, // ChatList faqat `unread` ni ishlatsin
-    tags: Array.isArray(t.tags) ? t.tags : [],
-    lastTs: toTs(first(t.last_message_at, t.updated_at, t.created_at)),
-    messages,
-    loaded: false,
-  }
-}
-
-const USER_ROLES = ['user', 'consumer', 'partner', 'customer', 'client']
-const AGENT_ROLES = ['agent', 'admin', 'support', 'staff', 'operator', 'moderator', 'manager']
-
-function detectFrom(m, chat) {
-  const sender = isObj(m.sender) ? m.sender : null
-  const role = [
-    m.sender_type,
-    m.sender_role,
-    m.author_type,
-    m.role,
-    m.from,
-    typeof m.sender === 'string' ? m.sender : null,
-    sender?.role,
-    sender?.user_type,
-    sender?.type,
-  ].find((v) => typeof v === 'string' && v)
-  const r = role ? role.toLowerCase() : null
-
-  if (m.is_system === true || r === 'system') return 'system'
-  if (m.is_from_user === true || m.is_from_consumer === true || m.is_from_partner === true)
-    return 'user'
-  if (
-    m.is_staff === true ||
-    m.is_from_staff === true ||
-    m.is_from_agent === true ||
-    m.is_support === true ||
-    m.is_admin === true ||
-    sender?.is_staff === true
-  )
-    return 'agent'
-
-  if (r) {
-    if (AGENT_ROLES.some((x) => r.includes(x))) return 'agent'
-    if (USER_ROLES.some((x) => r.includes(x))) return 'user'
-  }
-
-  // sender id'ni ticket egasi bilan solishtirish
-  const senderId = toId(
-    first(
-      m.sender_id,
-      m.author_id,
-      m.user_id,
-      sender?.id,
-      typeof m.sender === 'number' ? m.sender : null,
-    ),
-  )
-  const ownerId = toId(chat?.userId)
-  if (senderId && ownerId) return senderId === ownerId ? 'user' : 'agent'
-
-  return 'agent'
-}
-
-function formatMessage(m, chat) {
-  if (!m) return null
-
-  const from = detectFrom(m, chat)
-
-  const senderName =
-    first(
-      m.sender_name,
-      m.author_name,
-      m.agent_name,
-      m.user_name,
-      personName(isObj(m.sender) ? m.sender : null),
-    ) ||
-    (from === 'user'
-      ? chat?.user?.name || null
-      : from === 'agent'
-        ? normalizeAssignee(chat?.assignee) || getAgentName()
-        : null)
-
-  const ts = toTs(first(m.created_at, m.timestamp, m.ts, m.sent_at)) || Date.now()
-
-  return {
-    id: toId(first(m.id, m.pk, m.message_id)),
-    from,
-    senderName: senderName || null,
-    text: first(m.text, m.content, m.message, m.body) ?? '',
-    ts,
-    status: m.status || (m.is_read ? 'read' : 'sent'),
-  }
-}
-
-async function loadTicketList(path, audience, signal) {
-  const res = await api(path, { signal })
-  if (!res.ok) throw new Error(`${path} (${res.status})`)
+// birinchi sahifa (cursor yo'q) — backend uni "o'qildi" deb belgilaydi
+async function fetchMessages(chatId, { cursor, signal } = {}) {
+  const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+  const res = await api(`/conversations/${chatId}/messages/${qs}`, { signal })
+  if (!res.ok) throw new Error(`Xabarlarni olib bo'lmadi (${res.status})`)
   const data = await readJson(res)
-  const list = normalizeList(data)
-  return list.map((t) => formatChat(t, audience)).filter(Boolean)
-}
-
-async function fetchAllTickets(signal) {
-  const results = await Promise.allSettled([
-    loadTicketList('/tickets/', 'consumer', signal),
-    loadTicketList('/partner/tickets/', 'partner', signal),
-  ])
-
-  if (results.every((r) => r.status === 'rejected')) {
-    throw results[0].reason
+  return {
+    messages: listOf(data).map(formatMessage).filter(Boolean),
+    nextCursor: cursorOf(data?.next),
   }
-
-  const map = new Map()
-  for (const r of results) {
-    if (r.status !== 'fulfilled') {
-      if (r.reason?.name !== 'AbortError') console.warn('[tickets]', r.reason)
-      continue
-    }
-    for (const chat of r.value) map.set(chat.id, chat)
-  }
-  return [...map.values()].sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0))
-}
-
-async function fetchMessages(chat, signal) {
-  const res = await api(
-    `/tickets/${chat.ticketId}/messages/?audience=${encodeURIComponent(chat.audience)}`,
-    { signal },
-  )
-  if (!res.ok) {
-    const body = await res.text()
-    console.error('[messages] xato:', res.status, body)
-    throw new Error(`Xabarlarni olib bo'lmadi (${res.status})`)
-  }
-
-  const data = await readJson(res)
-  const metaEntries = isObj(data)
-    ? Object.entries(data).filter(
-      ([k, v]) => !Array.isArray(v) && !['count', 'next', 'previous'].includes(k),
-    )
-    : []
-  const meta = metaEntries.length ? Object.fromEntries(metaEntries) : null
-  const list = normalizeList(data)
-    .map((m) => formatMessage(m, chat))
-    .filter(Boolean)
-    .sort((a, b) => a.ts - b.ts)
-
-  // ba'zi backendlarda birinchi murojaat matni ticketning o'zida bo'ladi
-  const firstText = first(chat.description, chat.body, chat.content, chat.subject)
-  if (firstText && typeof firstText === 'string' && !list.some((m) => m.text === firstText)) {
-    list.unshift({
-      id: `first_${chat.ticketId}`,
-      from: 'user',
-      senderName: chat.user?.name || null,
-      text: firstText,
-      ts: toTs(chat.created_at) || (list[0]?.ts ?? Date.now()) - 1,
-      status: 'read',
-    })
-  }
-
-  list.meta = meta
-  return list
 }
 
 // ---------- hook ----------
 
-const NOTICE_MS = 5000
-
 export default function useSupportChat() {
   const [state, dispatch] = useReducer(reducer, null, init)
-  const [wsState, setWsState] = useState('connecting')
+  const [inboxState, setInboxState] = useState('connecting')
+  const [convState, setConvState] = useState('connecting')
   const [pollState, setPollState] = useState('idle') // idle | ok | error
   const [notice, setNotice] = useState(null)
+  const [agents, setAgents] = useState({ list: [], loading: false, error: null })
+
   const chatsRef = useRef([])
+  const inboxRef = useRef('connecting')
+  const convRef = useRef('connecting')
+  const socketRef = useRef(null)
   const noticeTimer = useRef(null)
-  const reloadRef = useRef(() => {})
+  const reloadRef = useRef(() => { })
 
   useEffect(() => {
     chatsRef.current = state.chats
@@ -716,32 +324,38 @@ export default function useSupportChat() {
     setNotice(null)
   }, [])
 
-  // 1. Ticketlar: birinchi yuklash + har 5 soniyada yangilash
+  // 1. Suhbatlar ro'yxati: birinchi yuklash (hamma sahifa) + polling zaxirasi
   useEffect(() => {
     let alive = true
     let initial = true
     let busy = false
+    let skipped = 0
     const controller = new AbortController()
 
     async function tick() {
       if (busy) return
+      // inbox WS ulangan bo'lsa — faqat har ~minutda bir marta tekshiramiz
+      if (!initial && inboxRef.current === 'connected' && (skipped += 1) % 12 !== 0) return
       busy = true
       try {
-        const chats = await fetchAllTickets(controller.signal)
+        const chats = await fetchConversations(controller.signal, initial)
         if (!alive) return
+
+        // o'zimizning ismimiz: bizga biriktirilgan suhbatdan olamiz
         const me = getUserId()
-        const mine = me && chats.find((c) => String(c.raw?.assigned_to) === me && c.assignee)
+        const mine = me && chats.find((c) => c.assigneeId === me && c.assignee)
         if (mine) setAgentName(mine.assignee)
-        dispatch({ type: initial ? 'set_initial_chats' : 'merge_chats', chats })
+
+        dispatch({ type: 'chats', chats })
         initial = false
         setPollState('ok')
       } catch (err) {
         if (err.name === 'AbortError') return
-        console.error('Ticket fetch error:', err)
+        console.error('Conversations fetch error:', err)
         if (alive) {
           setPollState('error')
           if (initial) {
-            dispatch({ type: 'set_initial_chats', chats: [] })
+            dispatch({ type: 'chats', chats: [] })
             initial = false
           }
         }
@@ -750,7 +364,11 @@ export default function useSupportChat() {
       }
     }
 
-    reloadRef.current = tick
+    reloadRef.current = () => {
+      skipped = 0
+      initial = true
+      return tick()
+    }
     tick()
     const timer = setInterval(tick, POLL_LIST_MS)
     return () => {
@@ -760,38 +378,85 @@ export default function useSupportChat() {
     }
   }, [])
 
-  // 2. WebSocket — faqat ochiq ticket uchun: /ws/support/<ticket_id>/<audience>/
-  const activeChat = state.chats.find((c) => c.id === state.activeId)
-  const wsTicketId = activeChat?.ticketId ?? null
-  const wsAudience = activeChat?.audience ?? null
-  const wsStatus = wsTicketId ? wsState : 'disabled'
-
+  // 2. Inbox WS: yangi xabar/suhbat, status va mas'ul o'zgarishi
   useEffect(() => {
-    if (!wsTicketId || !wsAudience) return
-
-    const chatId = `${wsAudience}:${wsTicketId}`
     const socket = createSupportSocket({
-      url: buildSupportWsUrl(wsTicketId, wsAudience),
-      onStatus: setWsState,
+      url: buildInboxWsUrl(),
+      onUnauthorized: refreshAccess,
+      onStatus: (s) => {
+        inboxRef.current = s
+        setInboxState(s)
+      },
       onEvent: (e) => {
-        // backend: {"type": "connected", ...} yoki xabar:
-        // {id, sender_id, sender_name, audience, content, created_at, is_read}
-        if (!e || e.type === 'connected') return
-        if (e.id == null || e.content == null) return
-
-        const chat = chatsRef.current.find((c) => c.id === chatId)
+        if (e?.event !== 'inbox_update' && e?.event !== 'assigned_to_you') return
+        const chat = formatChat(e.conversation)
         if (!chat) return
-        dispatch({ type: 'incoming', chatId, message: formatMessage(e, chat) })
+        dispatch({ type: 'summary', chat })
+        if (e.event === 'assigned_to_you') notify(`Sizga suhbat biriktirildi: ${chat.user.name}`)
       },
     })
-
     return () => socket.close()
-  }, [wsTicketId, wsAudience])
+  }, [notify])
 
-  // 3. Ochiq chat xabarlarini har 2.5 soniyada yangilash
+  // 3. Ochiq suhbat WS'i: /ws/support/<conversation_id>/
+  const activeId = state.activeId
+
   useEffect(() => {
-    const id = state.activeId
-    if (!id) return
+    if (!activeId) return
+
+    const socket = createSupportSocket({
+      url: buildConversationWsUrl(activeId),
+      onUnauthorized: refreshAccess,
+      onStatus: (s) => {
+        convRef.current = s
+        setConvState(s)
+      },
+      onEvent: (e) => {
+        switch (e?.event) {
+          case 'message': {
+            const m = formatMessage(e.message)
+            if (!m) break
+            dispatch({ type: 'incoming', chatId: activeId, message: m })
+            // suhbat ochiq turibdi — user xabari darhol o'qilgan hisoblanadi
+            if (m.from === 'user') socket.send({ action: 'read' })
+            break
+          }
+          case 'conversation': {
+            const chat = formatChat(e.conversation)
+            if (chat) dispatch({ type: 'summary', chat })
+            break
+          }
+          case 'read':
+            if (e.by === 'user') dispatch({ type: 'read_by_user', chatId: activeId })
+            break
+          case 'error':
+            notify(errorText(e.detail, 'Xatolik yuz berdi.'))
+            break
+          default:
+            break
+        }
+      },
+    })
+    socketRef.current = socket
+
+    return () => {
+      socket.close()
+      if (socketRef.current === socket) socketRef.current = null
+    }
+  }, [activeId, notify])
+
+  const wsStatus = activeId ? convState : 'disabled'
+
+  // 4. Xabarlarni yuklash (tanlaganda, amaldan keyin va WS'siz polling uchun)
+  const syncMessages = useCallback(async (chatId, signal) => {
+    const { messages, nextCursor } = await fetchMessages(chatId, { signal })
+    dispatch({ type: 'set_messages', chatId, messages, nextCursor })
+  }, [])
+
+  // WS ulanmagan bo'lsa ochiq suhbatni polling bilan yangilab turamiz
+  useEffect(() => {
+    if (!activeId) return
+    if (!['disabled', 'reconnecting', 'error'].includes(wsStatus)) return
 
     let alive = true
     let busy = false
@@ -799,14 +464,11 @@ export default function useSupportChat() {
 
     async function tick() {
       if (busy) return
-      const chat = chatsRef.current.find((c) => c.id === id)
-      if (!chat) return
       busy = true
       try {
-        const messages = await fetchMessages(chat, controller.signal)
-        if (alive) dispatch({ type: 'merge_messages', chatId: id, messages, meta: messages.meta })
+        await syncMessages(activeId, controller.signal)
       } catch (err) {
-        if (err.name !== 'AbortError') console.error('Messages poll error:', err)
+        if (alive && err.name !== 'AbortError') console.error('Messages poll error:', err)
       } finally {
         busy = false
       }
@@ -818,29 +480,45 @@ export default function useSupportChat() {
       clearInterval(timer)
       controller.abort()
     }
-  }, [state.activeId])
+  }, [activeId, wsStatus, syncMessages])
 
-  // 4. Chat tanlash + xabarlarni olish
-  const select = useCallback(async (rawId) => {
-    const id = toId(rawId)
-    if (!id) return
+  const select = useCallback(
+    async (rawId) => {
+      const id = toId(rawId)
+      if (!id) return
+      dispatch({ type: 'select', id })
+      try {
+        await syncMessages(id)
+      } catch (err) {
+        console.error('Messages fetch error:', err)
+        notify('Xabarlarni yuklab bo‘lmadi.')
+      }
+    },
+    [syncMessages, notify],
+  )
 
-    dispatch({ type: 'select', id })
+  const loadOlder = useCallback(
+    async (rawId) => {
+      const chatId = toId(rawId)
+      const chat = chatsRef.current.find((c) => c.id === chatId)
+      if (!chat?.nextCursor || chat.loadingOlder) return
 
-    const chat = chatsRef.current.find((c) => c.id === id)
-    if (!chat) return
+      dispatch({ type: 'patch', chatId, patch: { loadingOlder: true } })
+      try {
+        const { messages, nextCursor } = await fetchMessages(chatId, { cursor: chat.nextCursor })
+        dispatch({ type: 'prepend_messages', chatId, messages, nextCursor })
+      } catch (err) {
+        console.error('Older messages error:', err)
+        dispatch({ type: 'patch', chatId, patch: { loadingOlder: false } })
+        notify('Eski xabarlarni yuklab bo‘lmadi.')
+      }
+    },
+    [notify],
+  )
 
-    try {
-      const messages = await fetchMessages(chat)
-      dispatch({ type: 'merge_messages', chatId: id, messages, meta: messages.meta })
-    } catch (err) {
-      console.error('Messages fetch error:', err)
-    }
-  }, [])
-
-  // 5. Xabar yuborish (xato bo'lsa — "failed" holati + qayta yuborish)
+  // 5. Xabar yuborish (REST; WS orqali kelgan nusxa id bo'yicha birlashtiriladi)
   const sendMessage = useCallback(
-    async (rawChatId, rawText) => {
+    async (rawChatId, rawText, { internal = false } = {}) => {
       const chatId = toId(rawChatId)
       const text = (rawText ?? '').trim()
       if (!chatId || !text) return
@@ -856,37 +534,40 @@ export default function useSupportChat() {
         chatId,
         message: {
           id: tempId,
+          kind: internal ? 'internal' : 'agent',
           from: 'agent',
+          internal,
           senderName: agentName,
           text,
           ts: Date.now(),
           status: 'sending',
+          booking: null,
         },
       })
 
       try {
-        const res = await api(`/tickets/${chat.ticketId}/messages/send/`, {
+        const res = await api(`/conversations/${chatId}/messages/send/`, {
           method: 'POST',
-          body: JSON.stringify({ text, audience: chat.audience }),
+          body: JSON.stringify({ text, internal }),
         })
-        if (!res.ok) throw new Error(`Xabar yuborilmadi (${res.status})`)
+        const data = await readJson(res)
+        if (!res.ok) throw new Error(errorText(data, `Xabar yuborilmadi (${res.status})`))
 
-        const saved = await readJson(res)
-        const real = saved
-          ? formatMessage(saved.message || saved, { ...chat, assignee: agentName })
-          : null
-
-        if (real?.id) {
-          // bu xabar bizniki (agent), backend sender_role bermasa ham
-          const mine = { ...real, from: 'agent', senderName: real.senderName || agentName }
-          dispatch({ type: 'replace', chatId, tempId, message: mine })
+        const real = formatMessage(data)
+        if (real) {
+          dispatch({
+            type: 'replace',
+            chatId,
+            tempId,
+            message: { ...real, senderName: real.senderName || agentName },
+          })
         } else {
-          dispatch({ type: 'ack', chatId, messageId: tempId, status: 'delivered' })
+          dispatch({ type: 'ack', chatId, messageId: tempId, status: 'sent' })
         }
       } catch (err) {
         console.error('Send message error:', err)
         dispatch({ type: 'ack', chatId, messageId: tempId, status: 'failed' })
-        notify('Xabar yuborilmadi. «Qayta yuborish» tugmasini bosing.')
+        notify(err.message || 'Xabar yuborilmadi. «Qayta yuborish» tugmasini bosing.')
       }
     },
     [notify],
@@ -899,54 +580,90 @@ export default function useSupportChat() {
       const msg = chat?.messages?.find((m) => m.id === messageId)
       if (!msg || msg.status !== 'failed') return
       dispatch({ type: 'remove_message', chatId, messageId })
-      sendMessage(chatId, msg.text)
+      sendMessage(chatId, msg.text, { internal: msg.internal })
     },
     [sendMessage],
   )
 
-  // 6. Statusni o'zgartirish: avval server, keyin UI (xato bo'lsa — UI o'zgarmaydi)
-  const setStatus = useCallback(
-    async (rawChatId, newStatus) => {
+  // 6. Holat amallari: claim | close | reopen | transfer. Javob — yangilangan suhbat.
+  const act = useCallback(
+    async (rawChatId, action, body) => {
       const chatId = toId(rawChatId)
-      if (!chatId || !newStatus) return
-
       const chat = chatsRef.current.find((c) => c.id === chatId)
-      if (!chat || chat.statusBusy) return
+      if (!chat || chat.statusBusy) return false
 
       dispatch({ type: 'patch', chatId, patch: { statusBusy: true } })
-
-      const endpoint =
-        newStatus === 'resolved'
-          ? `/tickets/${chat.ticketId}/resolve/`
-          : `/tickets/${chat.ticketId}/assign/`
-
       try {
-        const res = await api(endpoint, {
+        const res = await api(`/conversations/${chatId}/${action}/`, {
           method: 'POST',
-          body: JSON.stringify({ status: newStatus, audience: chat.audience }),
+          body: JSON.stringify(body || {}),
         })
-        if (!res.ok) throw new Error(`Status yangilanmadi (${res.status})`)
-
         const data = await readJson(res)
-        const assignee = first(data?.assigned_to_name, chat.assignee)
-        if (assignee && String(data?.assigned_to) === getUserId()) setAgentName(assignee)
+        if (!res.ok) throw new Error(errorText(data, `Amal bajarilmadi (${res.status})`))
 
-        dispatch({
-          type: 'status',
-          chatId,
-          status: newStatus,
-          assignee: newStatus === 'resolved' ? undefined : assignee,
-          by: getAgentName(),
-        })
+        const updated = formatChat(data)
+        if (updated) {
+          dispatch({ type: 'summary', chat: updated })
+          if (updated.assigneeId === getUserId() && updated.assignee) setAgentName(updated.assignee)
+        }
+        // tizim xabarlari ("Suhbat yopildi", ...) WS orqali keladi; WS yo'q bo'lsa — qayta yuklaymiz
+        if (convRef.current !== 'connected') syncMessages(chatId).catch(() => { })
+        return true
       } catch (err) {
-        console.error('Status update error:', err)
-        notify('Holatni o‘zgartirib bo‘lmadi. Qayta urinib ko‘ring.')
+        console.error(`Conversation ${action} error:`, err)
+        notify(err.message || 'Amalni bajarib bo‘lmadi. Qayta urinib ko‘ring.')
+        return false
       } finally {
         dispatch({ type: 'patch', chatId, patch: { statusBusy: false } })
       }
     },
-    [notify],
+    [notify, syncMessages],
   )
+
+  const claim = useCallback((id) => act(id, 'claim'), [act])
+  const closeChat = useCallback((id) => act(id, 'close'), [act])
+  const reopen = useCallback((id) => act(id, 'reopen'), [act])
+  const transfer = useCallback(
+    (id, toAgentId, note = '') => act(id, 'transfer', { to_agent_id: Number(toAgentId), note }),
+    [act],
+  )
+
+  // 7. O'tkazish uchun xodimlar (o'zi chiqmaydi)
+  const loadAgents = useCallback(async () => {
+    setAgents((a) => ({ ...a, loading: true, error: null }))
+    try {
+      const res = await api('/agents/')
+      const data = await readJson(res)
+      if (!res.ok) throw new Error(errorText(data, `Xodimlar (${res.status})`))
+      setAgents({ list: Array.isArray(data) ? data : listOf(data), loading: false, error: null })
+    } catch (err) {
+      console.error('Agents fetch error:', err)
+      setAgents((a) => ({ ...a, loading: false, error: 'Xodimlar ro‘yxatini olib bo‘lmadi.' }))
+    }
+  }, [])
+
+  // 8. User'ning oxirgi bookinglari (check-in kodsiz)
+  const loadBookings = useCallback(async (rawId) => {
+    const chatId = toId(rawId)
+    if (!chatId) return
+    try {
+      const res = await api(`/conversations/${chatId}/bookings/`)
+      const data = await readJson(res)
+      if (!res.ok) throw new Error(errorText(data, `Bronlar (${res.status})`))
+      dispatch({
+        type: 'patch',
+        chatId,
+        patch: { bookings: Array.isArray(data) ? data : listOf(data), bookingsError: null },
+      })
+    } catch (err) {
+      console.error('Bookings fetch error:', err)
+      dispatch({
+        type: 'patch',
+        chatId,
+        patch: { bookings: [], bookingsError: 'Bronlarni olib bo‘lmadi.' },
+      })
+    }
+  }, [])
 
   const reload = useCallback(() => reloadRef.current(), [])
 
@@ -955,10 +672,9 @@ export default function useSupportChat() {
     [state.chats, state.activeId],
   )
 
-  // connected — WS ulangan (real-time); polling — faqat har 5 s da yangilanadi;
-  // offline — server javob bermayapti; connecting — birinchi yuklash
+  // connected — inbox WS ulangan (real-time); polling — faqat REST; offline — server javob bermayapti
   const connection =
-    wsStatus === 'connected'
+    inboxState === 'connected'
       ? 'connected'
       : pollState === 'ok'
         ? 'polling'
@@ -973,10 +689,17 @@ export default function useSupportChat() {
     error: pollState === 'error' ? 'Ma’lumotlarni yuklab bo‘lmadi' : null,
     notice,
     connection,
+    agents,
     select,
     sendMessage,
     retryMessage,
-    setStatus,
+    claim,
+    closeChat,
+    reopen,
+    transfer,
+    loadOlder,
+    loadAgents,
+    loadBookings,
     reload,
     dismissNotice,
   }

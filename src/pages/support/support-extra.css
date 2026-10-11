@@ -1,0 +1,276 @@
+/* =========================================================
+   YANGI BACKEND (conversation) uchun qo'shimcha uslublar.
+   support.css dagi tokenlardan foydalanadi (.sp scope).
+   ========================================================= */
+
+/* ---- ichki eslatma (faqat xodimlar ko'radi) ---- */
+.sp-msg--internal .sp-bubble {
+    background: rgba(242, 180, 65, 0.12);
+    border: 1px dashed rgba(242, 180, 65, 0.55);
+
+    color: var(--text);
+    box-shadow: none;
+}
+
+.sp-msg--internal .sp-bubble__agent {
+    color: var(--amber);
+}
+
+.sp-bubble__label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+
+    margin-bottom: 3px;
+
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+
+    color: var(--amber);
+}
+
+.sp-bubble__bk {
+    display: inline-block;
+
+    margin-bottom: 4px;
+    padding: 2px 8px;
+
+    border-radius: 8px;
+
+    font-size: 12px;
+    font-weight: 600;
+
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.sp-msg--user .sp-bubble__bk {
+    background: var(--panel-3);
+    color: var(--muted);
+}
+
+/* ---- eski xabarlarni yuklash ---- */
+.sp-loadmore {
+    display: block;
+
+    margin: 4px auto 12px;
+    padding: 7px 14px;
+
+    border-radius: 999px;
+    border: 1px solid var(--line-2);
+
+    font-size: 13px;
+    color: var(--muted);
+
+    transition: 0.15s;
+}
+
+.sp-loadmore:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--panel-2);
+}
+
+.sp-loadmore:disabled {
+    opacity: 0.6;
+}
+
+/* ---- composer: yopilgan / ichki rejim ---- */
+.sp-composer__closed {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+
+    margin-bottom: 8px;
+    padding: 8px 8px 8px 14px;
+
+    border-radius: 14px;
+    border: 1px solid var(--line-2);
+
+    font-size: 13.5px;
+    color: var(--muted);
+
+    background: var(--panel);
+}
+
+.sp-composer__closed .sp-btn {
+    height: 34px;
+}
+
+.sp-composer__box.is-internal {
+    border-color: rgba(242, 180, 65, 0.6);
+    background: rgba(242, 180, 65, 0.06);
+}
+
+.sp-composer__box.is-internal:focus-within {
+    box-shadow: 0 0 0 4px rgba(242, 180, 65, 0.12);
+}
+
+.sp-composer__box.is-internal .sp-iconbtn.is-on {
+    background: rgba(242, 180, 65, 0.18);
+    color: var(--amber);
+}
+
+.sp-composer textarea:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.sp-composer__box .sp-iconbtn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ---- xodimga o'tkazish ---- */
+.sp-transfer {
+    position: relative;
+}
+
+.sp-btn.is-on {
+    background: var(--panel-2);
+}
+
+.sp-transfer__pop {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 30;
+
+    width: min(320px, 86vw);
+    padding: 14px;
+
+    border-radius: 16px;
+    border: 1px solid var(--line-2);
+
+    background: var(--panel-2);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+}
+
+.sp-transfer__pop h4 {
+    margin: 0 0 10px;
+
+    font-size: 14px;
+}
+
+.sp-transfer__hint {
+    margin: 0 0 8px;
+
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.sp-transfer__hint--err {
+    color: var(--red-hi);
+}
+
+.sp-transfer__list {
+    max-height: 200px;
+    overflow-y: auto;
+
+    margin: 0 0 10px;
+    padding: 0;
+
+    list-style: none;
+}
+
+.sp-transfer__agent {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+
+    padding: 8px 10px;
+
+    border-radius: 10px;
+
+    font-size: 13.5px;
+    cursor: pointer;
+}
+
+.sp-transfer__agent:hover,
+.sp-transfer__agent.is-on {
+    background: var(--panel-3);
+}
+
+.sp-transfer__agent span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sp-transfer__agent small {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.sp-transfer__agent input {
+    accent-color: var(--red);
+}
+
+.sp-transfer__note {
+    width: 100%;
+    box-sizing: border-box;
+
+    padding: 8px 10px;
+
+    border-radius: 10px;
+    border: 1px solid var(--line-2);
+
+    font-size: 13px;
+    resize: vertical;
+
+    background: var(--panel);
+}
+
+.sp-transfer__note:focus-visible {
+    outline: 0;
+    border-color: rgba(224, 33, 47, 0.6);
+}
+
+.sp-transfer__foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+
+    margin-top: 10px;
+}
+
+.sp-transfer__foot .sp-btn {
+    height: 36px;
+    padding: 0 12px;
+
+    font-size: 13px;
+}
+
+/* ---- info panel: bronlar ---- */
+.sp-bk-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sp-info__empty {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+
+    margin: 0;
+
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.sp-info__empty--err {
+    color: var(--red-hi);
+}
+
+.sp-link {
+    padding: 0;
+
+    font-size: inherit;
+    text-decoration: underline;
+    color: var(--text);
+}

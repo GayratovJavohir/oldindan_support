@@ -16,10 +16,9 @@ const authHeaders = () => {
   }
 }
 
-// Bir vaqtda ko'p so'rov 401 olsa, refresh bitta marta chaqiriladi
 let refreshing = null
 
-function refreshAccess() {
+export function refreshAccess() {
   const refresh = getRefreshToken()
   if (!refresh) return Promise.resolve(false)
 

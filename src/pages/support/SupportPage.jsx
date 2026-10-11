@@ -5,6 +5,7 @@ import UserPanel from './components/UserPanel'
 // ❗ default import bo'lishi kerak:
 import useSupportChat from '../../hooks/useSupportChat'
 import './support.css'
+import './support-extra.css'
 
 const CONN = {
   connected: 'Jonli ulangan',
@@ -21,10 +22,17 @@ export default function SupportPage() {
     error,
     notice,
     connection,
+    agents,
     select,
     sendMessage,
     retryMessage,
-    setStatus,
+    claim,
+    closeChat,
+    reopen,
+    transfer,
+    loadOlder,
+    loadAgents,
+    loadBookings,
     reload,
     dismissNotice,
   } = useSupportChat()
@@ -45,10 +53,10 @@ export default function SupportPage() {
       <div className="sp-top">
         <div>
           <h1>Support</h1>
-          <p>Foydalanuvchilarning ilova bo'yicha murojaatlari</p>
+          <p>Foydalanuvchilarning ilova bo'yicha suhbatlari</p>
         </div>
         <div className="sp-top__right">
-          {newCount > 0 && <span className="sp-top__new">{newCount} ta yangi murojaat</span>}
+          {newCount > 0 && <span className="sp-top__new">{newCount} ta yangi suhbat</span>}
           <span className={`sp-conn sp-conn--${connection}`}>
             <i />
             {CONN[connection] ?? connection}
@@ -71,15 +79,24 @@ export default function SupportPage() {
       >
         <ChatList chats={chats} activeId={active?.id} onSelect={open} loading={loading} />
         <ChatWindow
+          key={active?.id ?? 'none'}
           chat={active}
+          agents={agents}
           onSend={sendMessage}
-          onStatus={setStatus}
+          onClaim={claim}
+          onClose={closeChat}
+          onReopen={reopen}
+          onTransfer={transfer}
+          onLoadAgents={loadAgents}
+          onLoadOlder={loadOlder}
           onRetry={retryMessage}
           onBack={() => setMobileChat(false)}
           onToggleInfo={() => setInfoOpen((v) => !v)}
           infoOpen={infoOpen}
         />
-        {infoOpen && active && <UserPanel chat={active} onClose={() => setInfoOpen(false)} />}
+        {infoOpen && active && (
+          <UserPanel chat={active} onClose={() => setInfoOpen(false)} onLoadBookings={loadBookings} />
+        )}
       </div>
 
       {notice && (
