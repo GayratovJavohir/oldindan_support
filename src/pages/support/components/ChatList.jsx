@@ -12,11 +12,7 @@ const TABS = [
 
 const lastOf = (c) => [...(c.messages || [])].reverse().find((m) => m.from !== 'system')
 
-<<<<<<< HEAD
 export default function ChatList({ chats, activeId, onSelect, loading = false }) {
-=======
-export default function ChatList({ chats, activeId, onSelect }) {
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   const [tab, setTab] = useState('all')
   const [q, setQ] = useState('')
 
@@ -110,11 +106,7 @@ export default function ChatList({ chats, activeId, onSelect }) {
         {!rows.length && (
           <li className="sp-empty-list">
             <IconInbox size={30} />
-<<<<<<< HEAD
             <p>{loading ? 'Yuklanmoqda…' : 'Hech narsa topilmadi'}</p>
-=======
-            <p>Hech narsa topilmadi</p>
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
           </li>
         )}
       </ul>

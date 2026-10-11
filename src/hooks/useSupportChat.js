@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { createSupportSocket } from '../services/supportSocket'
-<<<<<<< HEAD
 import { SUPPORT_API, buildSupportWsUrl } from '../config/env'
 import { getAgentName, getUserId, setAgentName } from '../lib/auth'
 import { http, readJson } from '../lib/http'
-=======
-
-const API_BASE = '/api/support'
-const CURRENT_AGENT = { name: 'Dilshod', role: 'Support xodimi' }
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
 const POLL_LIST_MS = 5000 // ticketlar ro'yxati
 const POLL_MESSAGES_MS = 2500 // ochiq chatdagi xabarlar
@@ -154,7 +148,6 @@ function reducer(state, act) {
     case 'send':
       return patchChat(state, act.chatId, (c) => ({
         ...c,
-<<<<<<< HEAD
         messages: [...(c.messages || []), act.message],
       }))
 
@@ -167,13 +160,6 @@ function reducer(state, act) {
         messages: (c.messages || []).filter((m) => m.id !== act.messageId),
       }))
 
-=======
-        status: c.status === 'new' ? 'open' : c.status,
-        assignee: c.assignee ?? CURRENT_AGENT.name,
-        messages: [...(c.messages || []), act.message],
-      }))
-
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
     case 'replace':
       return patchChat(state, act.chatId, (c) => {
         const list = c.messages || []
@@ -199,15 +185,11 @@ function reducer(state, act) {
         ),
       }))
 
-<<<<<<< HEAD
     // faqat server tasdiqlagandan keyin chaqiriladi
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
     case 'status':
       return patchChat(state, act.chatId, (c) => ({
         ...c,
         status: act.status,
-<<<<<<< HEAD
         assignee: act.assignee ?? c.assignee,
         messages: [
           ...(c.messages || []),
@@ -223,25 +205,6 @@ function reducer(state, act) {
                   : `Murojaatni ${act.by} qabul qildi`,
           },
         ],
-=======
-        assignee: act.assignee ?? c.assignee ?? CURRENT_AGENT.name,
-        messages: act.silent
-          ? c.messages || []
-          : [
-            ...(c.messages || []),
-            {
-              id: `sys_${Date.now()}`,
-              from: 'system',
-              ts: Date.now(),
-              text:
-                act.status === 'resolved'
-                  ? `Murojaat hal qilindi — ${act.assignee || CURRENT_AGENT.name}`
-                  : c.status === 'resolved'
-                    ? `Murojaat qayta ochildi — ${act.assignee || CURRENT_AGENT.name}`
-                    : `Murojaatni ${act.assignee || CURRENT_AGENT.name} qabul qildi`,
-            },
-          ],
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
       }))
 
     default:
@@ -251,42 +214,7 @@ function reducer(state, act) {
 
 // ---------- API helpers ----------
 
-<<<<<<< HEAD
 const api = (path, options) => http(`${SUPPORT_API}${path}`, options)
-=======
-const getAuthHeaders = () => {
-  const token = localStorage.getItem('access_token') || localStorage.getItem('token')
-  return {
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  }
-}
-
-async function api(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: { ...getAuthHeaders(), ...(options.headers || {}) },
-  })
-  if (res.status === 401) {
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('token')
-    localStorage.removeItem('refresh_token')
-    window.dispatchEvent(new Event('support:unauthorized'))
-  }
-  return res
-}
-
-async function readJson(res) {
-  const text = await res.text()
-  if (!text) return null
-  try {
-    return JSON.parse(text)
-  } catch {
-    return null
-  }
-}
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
 function normalizeList(data) {
   if (!data) return []
@@ -319,7 +247,6 @@ function normalizeAssignee(a) {
   return null
 }
 
-<<<<<<< HEAD
 // Backend: open | in_progress | resolved.
 // Hech kim biriktirilmagan `open` ticket — "Yangi"; biriktirilgan yoki in_progress — "Jarayonda".
 function normalizeStatus(s, hasAssignee = true) {
@@ -329,13 +256,6 @@ function normalizeStatus(s, hasAssignee = true) {
   if (['open', 'opened', 'new', 'pending', 'created', 'waiting'].includes(v)) {
     return hasAssignee ? 'open' : 'new'
   }
-=======
-function normalizeStatus(s) {
-  const v = String(s || 'new').toLowerCase()
-  if (['resolved', 'closed', 'done', 'solved'].includes(v)) return 'resolved'
-  if (['open', 'opened', 'assigned', 'in_progress', 'processing'].includes(v)) return 'open'
-  if (['new', 'pending', 'created', 'waiting'].includes(v)) return 'new'
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   return v
 }
 
@@ -590,18 +510,11 @@ function formatChat(t, fallbackAudience = 'consumer') {
     if (m) messages.push(m)
   }
 
-<<<<<<< HEAD
   const assignee =
     normalizeAssignee(t.assignee) ||
     normalizeAssignee(t.assigned_to) ||
     first(t.assigned_to_name, t.assignee_name, t.agent_name) ||
     null
-=======
-  if (!window.__supportTicketLogged) {
-    window.__supportTicketLogged = true
-    console.info('[support] ticket namunasi (backend raw):', t)
-  }
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
   return {
     ...t,
@@ -610,17 +523,8 @@ function formatChat(t, fallbackAudience = 'consumer') {
     audience,
     raw: t,
     ...d,
-<<<<<<< HEAD
     status: normalizeStatus(t.status, !!(assignee || t.assigned_to)),
     assignee,
-=======
-    status: normalizeStatus(t.status),
-    assignee:
-      normalizeAssignee(t.assignee) ||
-      normalizeAssignee(t.assigned_to) ||
-      first(t.assigned_to_name, t.assignee_name, t.agent_name) ||
-      null,
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
     unread: first(t.unread_count, t.unread) ?? undefined,
     unread_count: undefined, // ChatList faqat `unread` ni ishlatsin
     tags: Array.isArray(t.tags) ? t.tags : [],
@@ -698,11 +602,7 @@ function formatMessage(m, chat) {
     (from === 'user'
       ? chat?.user?.name || null
       : from === 'agent'
-<<<<<<< HEAD
         ? normalizeAssignee(chat?.assignee) || getAgentName()
-=======
-        ? normalizeAssignee(chat?.assignee) || CURRENT_AGENT.name
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
         : null)
 
   const ts = toTs(first(m.created_at, m.timestamp, m.ts, m.sent_at)) || Date.now()
@@ -717,30 +617,11 @@ function formatMessage(m, chat) {
   }
 }
 
-<<<<<<< HEAD
-=======
-function buildSupportWsUrl(ticketId, audience) {
-  const custom = import.meta.env.VITE_SUPPORT_WS_URL
-  const base = custom
-    ? custom.replace(/\/+$/, '')
-    : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/support`
-  return `${base}/${ticketId}/${audience}/`
-}
-
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 async function loadTicketList(path, audience, signal) {
   const res = await api(path, { signal })
   if (!res.ok) throw new Error(`${path} (${res.status})`)
   const data = await readJson(res)
   const list = normalizeList(data)
-<<<<<<< HEAD
-=======
-  window.__ticketListLogged = window.__ticketListLogged || {}
-  if (!window.__ticketListLogged[path]) {
-    window.__ticketListLogged[path] = true
-    console.info(`[support] ${path} raw:`, JSON.stringify(list))
-  }
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   return list.map((t) => formatChat(t, audience)).filter(Boolean)
 }
 
@@ -801,21 +682,12 @@ async function fetchMessages(chat, signal) {
     })
   }
 
-<<<<<<< HEAD
-=======
-  if (list.length && !window.__supportMsgLogged) {
-    window.__supportMsgLogged = true
-    console.debug('[support] xabar namunasi (raw):', normalizeList(data)[0])
-  }
-
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   list.meta = meta
   return list
 }
 
 // ---------- hook ----------
 
-<<<<<<< HEAD
 const NOTICE_MS = 5000
 
 export default function useSupportChat() {
@@ -843,41 +715,11 @@ export default function useSupportChat() {
     clearTimeout(noticeTimer.current)
     setNotice(null)
   }, [])
-=======
-export default function useSupportChat() {
-  const [state, dispatch] = useReducer(reducer, null, init)
-  const [wsStatus, setWsStatus] = useState('connecting')
-  const [pollOk, setPollOk] = useState(false)
-  const socketRef = useRef(null)
-  const chatsRef = useRef([])
-  const activeIdRef = useRef(null)
-
-  useEffect(() => {
-    chatsRef.current = state.chats
-    activeIdRef.current = state.activeId
-  }, [state.chats, state.activeId])
-
-  const findChat = (rawId, audience) => {
-    const id = toId(rawId)
-    if (!id) return null
-    return (
-      chatsRef.current.find((c) => c.id === id) ||
-      chatsRef.current.find(
-        (c) => c.ticketId === id && (!audience || c.audience === audience),
-      ) ||
-      null
-    )
-  }
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
   // 1. Ticketlar: birinchi yuklash + har 5 soniyada yangilash
   useEffect(() => {
     let alive = true
-<<<<<<< HEAD
     let initial = true
-=======
-    let first = true
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
     let busy = false
     const controller = new AbortController()
 
@@ -887,33 +729,20 @@ export default function useSupportChat() {
       try {
         const chats = await fetchAllTickets(controller.signal)
         if (!alive) return
-<<<<<<< HEAD
         const me = getUserId()
         const mine = me && chats.find((c) => String(c.raw?.assigned_to) === me && c.assignee)
         if (mine) setAgentName(mine.assignee)
         dispatch({ type: initial ? 'set_initial_chats' : 'merge_chats', chats })
         initial = false
         setPollState('ok')
-=======
-        dispatch({ type: first ? 'set_initial_chats' : 'merge_chats', chats })
-        first = false
-        setPollOk(true)
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
       } catch (err) {
         if (err.name === 'AbortError') return
         console.error('Ticket fetch error:', err)
         if (alive) {
-<<<<<<< HEAD
           setPollState('error')
           if (initial) {
             dispatch({ type: 'set_initial_chats', chats: [] })
             initial = false
-=======
-          setPollOk(false)
-          if (first) {
-            dispatch({ type: 'set_initial_chats', chats: [] })
-            first = false
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
           }
         }
       } finally {
@@ -921,10 +750,7 @@ export default function useSupportChat() {
       }
     }
 
-<<<<<<< HEAD
     reloadRef.current = tick
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
     tick()
     const timer = setInterval(tick, POLL_LIST_MS)
     return () => {
@@ -938,28 +764,15 @@ export default function useSupportChat() {
   const activeChat = state.chats.find((c) => c.id === state.activeId)
   const wsTicketId = activeChat?.ticketId ?? null
   const wsAudience = activeChat?.audience ?? null
-<<<<<<< HEAD
   const wsStatus = wsTicketId ? wsState : 'disabled'
 
   useEffect(() => {
     if (!wsTicketId || !wsAudience) return
-=======
-
-  useEffect(() => {
-    if (!wsTicketId || !wsAudience) {
-      setWsStatus('disabled')
-      return
-    }
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
     const chatId = `${wsAudience}:${wsTicketId}`
     const socket = createSupportSocket({
       url: buildSupportWsUrl(wsTicketId, wsAudience),
-<<<<<<< HEAD
       onStatus: setWsState,
-=======
-      onStatus: setWsStatus,
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
       onEvent: (e) => {
         // backend: {"type": "connected", ...} yoki xabar:
         // {id, sender_id, sender_name, audience, content, created_at, is_read}
@@ -972,15 +785,7 @@ export default function useSupportChat() {
       },
     })
 
-<<<<<<< HEAD
     return () => socket.close()
-=======
-    socketRef.current = socket
-    return () => {
-      socketRef.current = null
-      socket.close()
-    }
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   }, [wsTicketId, wsAudience])
 
   // 3. Ochiq chat xabarlarini har 2.5 soniyada yangilash
@@ -1024,14 +829,6 @@ export default function useSupportChat() {
 
     const chat = chatsRef.current.find((c) => c.id === id)
     if (!chat) return
-<<<<<<< HEAD
-=======
-    socketRef.current?.send?.({
-      type: 'read',
-      chatId: chat.ticketId,
-      audience: chat.audience,
-    })
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
     try {
       const messages = await fetchMessages(chat)
@@ -1041,7 +838,6 @@ export default function useSupportChat() {
     }
   }, [])
 
-<<<<<<< HEAD
   // 5. Xabar yuborish (xato bo'lsa — "failed" holati + qayta yuborish)
   const sendMessage = useCallback(
     async (rawChatId, rawText) => {
@@ -1153,132 +949,12 @@ export default function useSupportChat() {
   )
 
   const reload = useCallback(() => reloadRef.current(), [])
-=======
-  // 5. Xabar yuborish
-  const sendMessage = useCallback(async (rawChatId, rawText) => {
-    const chatId = toId(rawChatId)
-    const text = (rawText ?? '').trim()
-    if (!chatId || !text) return
-
-    const chat = chatsRef.current.find((c) => c.id === chatId)
-    if (!chat) return
-
-    const agentName =
-      (typeof chat.assignee === 'string' ? chat.assignee : null) || CURRENT_AGENT.name
-    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
-
-    dispatch({
-      type: 'send',
-      chatId,
-      message: {
-        id: tempId,
-        from: 'agent',
-        senderName: agentName,
-        text,
-        ts: Date.now(),
-        status: 'sending',
-      },
-    })
-
-    try {
-      const res = await api(`/tickets/${chat.ticketId}/messages/send/`, {
-        method: 'POST',
-        body: JSON.stringify({
-          text,
-          content: text,
-          message: text,
-          audience: chat.audience,
-        }),
-      })
-
-      const raw = await res.text()
-      if (!res.ok) {
-        console.error('[send] Django xatosi:', res.status, raw)
-        throw new Error(`Xabar yuborilmadi (${res.status})`)
-      }
-
-      let saved = null
-      try {
-        saved = raw ? JSON.parse(raw) : null
-      } catch {
-        saved = null
-      }
-
-      const real = saved ? formatMessage(saved.message || saved, { ...chat, assignee: agentName }) : null
-      if (real?.id) {
-        // backend sender_type bermasa ham, bu xabar bizniki (agent)
-        const mine = { ...real, from: 'agent', senderName: real.senderName || agentName }
-        dispatch({ type: 'replace', chatId, tempId, message: mine })
-        socketRef.current?.send?.({
-          type: 'message',
-          chatId: chat.ticketId,
-          audience: chat.audience,
-          id: mine.id,
-          text: mine.text,
-        })
-        return
-      }
-
-      dispatch({ type: 'ack', chatId, messageId: tempId, status: 'delivered' })
-      socketRef.current?.send?.({
-        type: 'message',
-        chatId: chat.ticketId,
-        audience: chat.audience,
-        id: tempId,
-        text,
-      })
-    } catch (err) {
-      console.error('Send message error:', err)
-      dispatch({ type: 'ack', chatId, messageId: tempId, status: 'failed' })
-    }
-  }, [])
-
-  // 6. Statusni o'zgartirish (assign / resolve)
-  const setStatus = useCallback(async (rawChatId, newStatus) => {
-    const chatId = toId(rawChatId)
-    if (!chatId || !newStatus) return
-
-    const chat = chatsRef.current.find((c) => c.id === chatId)
-    if (!chat) return
-    const agentName =
-      (typeof chat.assignee === 'string' ? chat.assignee : null) || CURRENT_AGENT.name
-
-    dispatch({ type: 'status', chatId, status: newStatus, assignee: agentName })
-    socketRef.current?.send?.({
-      type: 'status',
-      chatId: chat.ticketId,
-      audience: chat.audience,
-      status: newStatus,
-    })
-
-    const endpoint =
-      newStatus === 'resolved'
-        ? `/tickets/${chat.ticketId}/resolve/`
-        : `/tickets/${chat.ticketId}/assign/`
-
-    try {
-      const res = await api(endpoint, {
-        method: 'POST',
-        body: JSON.stringify({ status: newStatus, audience: chat.audience }),
-      })
-
-      if (!res.ok) {
-        const raw = await res.text()
-        console.error('[status] Django xatosi:', res.status, raw)
-        throw new Error(`Status yangilanmadi (${res.status})`)
-      }
-    } catch (err) {
-      console.error('Status update error:', err)
-    }
-  }, [])
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
   const active = useMemo(
     () => state.chats.find((c) => c.id === state.activeId) ?? null,
     [state.chats, state.activeId],
   )
 
-<<<<<<< HEAD
   // connected — WS ulangan (real-time); polling — faqat har 5 s da yangilanadi;
   // offline — server javob bermayapti; connecting — birinchi yuklash
   const connection =
@@ -1289,21 +965,11 @@ export default function useSupportChat() {
         : pollState === 'error'
           ? 'offline'
           : 'connecting'
-=======
-  // WS bo'lmasa ham polling ishlayotgan bo'lsa — "jonli" deb ko'rsatamiz
-  const connection =
-    wsStatus === 'connected' || pollOk
-      ? 'connected'
-      : wsStatus === 'disabled'
-        ? 'reconnecting'
-        : wsStatus
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
   return {
     chats: state.chats,
     active,
     loading: state.loading,
-<<<<<<< HEAD
     error: pollState === 'error' ? 'Ma’lumotlarni yuklab bo‘lmadi' : null,
     notice,
     connection,
@@ -1315,11 +981,3 @@ export default function useSupportChat() {
     dismissNotice,
   }
 }
-=======
-    connection,
-    select,
-    sendMessage,
-    setStatus,
-  }
-}
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066

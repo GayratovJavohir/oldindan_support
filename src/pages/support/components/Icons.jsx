@@ -20,14 +20,7 @@ export const IconBox = (p) => <Svg {...p}><><path d="M3 7.5 12 3l9 4.5v9L12 21l-
 export const IconChart = (p) => <Svg {...p}><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></Svg>
 export const IconLock = (p) => <Svg {...p}><><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></></Svg>
 export const IconInbox = (p) => <Svg {...p}><path d="M3 13h5l1.5 3h5L16 13h5M5 5h14l2 8v6H3v-6l2-8Z" /></Svg>
-<<<<<<< HEAD
 export const IconBook = (p) => <Svg {...p}><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5ZM19 19v2H6" /></Svg>
 export const IconClose = (p) => <Svg {...p}><path d="M6 6l12 12M18 6 6 18" /></Svg>
 
 export const IconLogout = (p) => <Svg {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></Svg>
-=======
-export const IconPlus = (p) => <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>
-export const IconRefresh = (p) => <Svg {...p}><path d="M20 11a8 8 0 0 0-14.5-4M4 4v4h4M4 13a8 8 0 0 0 14.5 4M20 20v-4h-4" /></Svg>
-export const IconBook = (p) => <Svg {...p}><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5ZM19 19v2H6" /></Svg>
-export const IconClose = (p) => <Svg {...p}><path d="M6 6l12 12M18 6 6 18" /></Svg>
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066

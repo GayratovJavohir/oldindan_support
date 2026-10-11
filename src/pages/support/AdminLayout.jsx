@@ -1,9 +1,5 @@
-<<<<<<< HEAD
 import { IconBox, IconChart, IconChat, IconLock, IconLogout, IconUsers } from './components/Icons'
 import useAgentName from '../../lib/useAgentName'
-=======
-import { IconBox, IconChart, IconChat, IconLock, IconUsers } from './components/Icons'
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
 
 const NAV = [
   { label: 'Support', icon: IconChat, active: true },
@@ -12,19 +8,12 @@ const NAV = [
   { label: 'Statistika', icon: IconChart },
 ]
 
-<<<<<<< HEAD
 const AGENT_ROLE = 'Support xodimi'
 
 export default function AdminLayout({ children, onLogout }) {
   const name = useAgentName()
   const agent = { name, role: AGENT_ROLE }
 
-=======
-export default function AdminLayout({
-  children,
-  agent = { name: 'Dilshod', role: 'Support xodimi' },
-}) {
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   return (
     <div className="ad">
       <aside className="ad-side">
@@ -52,7 +41,6 @@ export default function AdminLayout({
 
         <div className="ad-me">
           <span className="ad-me__av">{agent.name[0]}</span>
-<<<<<<< HEAD
           <span className="ad-me__info">
             <strong>{agent.name}</strong>
             <small>{agent.role}</small>
@@ -66,12 +54,6 @@ export default function AdminLayout({
           >
             <IconLogout size={18} />
           </button>
-=======
-          <span>
-            <strong>{agent.name}</strong>
-            <small>{agent.role}</small>
-          </span>
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
         </div>
       </aside>
 

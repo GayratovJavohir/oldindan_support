@@ -19,10 +19,7 @@ const QUICK_REPLIES = [
 ]
 
 function Ticks({ status }) {
-<<<<<<< HEAD
   if (status === 'sending') return <IconClock size={13} className="tick" />
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   if (status === 'read') return <IconChecks size={15} className="tick tick--read" />
   if (status === 'delivered') return <IconChecks size={15} className="tick" />
   return <IconCheck size={14} className="tick" />
@@ -32,10 +29,7 @@ export default function ChatWindow({
   chat,
   onSend,
   onStatus,
-<<<<<<< HEAD
   onRetry,
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   onBack,
   onToggleInfo,
   infoOpen,
@@ -130,10 +124,7 @@ export default function ChatWindow({
           {chat.status === 'new' && (
             <button
               className="sp-btn sp-btn--ghost"
-<<<<<<< HEAD
               disabled={chat.statusBusy}
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
               onClick={() => onStatus(chat.id, 'open')}
             >
               Qabul qilish
@@ -142,10 +133,7 @@ export default function ChatWindow({
           {resolved ? (
             <button
               className="sp-btn sp-btn--ghost"
-<<<<<<< HEAD
               disabled={chat.statusBusy}
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
               onClick={() => onStatus(chat.id, 'open')}
             >
               Qayta ochish
@@ -153,10 +141,7 @@ export default function ChatWindow({
           ) : (
             <button
               className="sp-btn sp-btn--solid"
-<<<<<<< HEAD
               disabled={chat.statusBusy}
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
               onClick={() => onStatus(chat.id, 'resolved')}
             >
               <IconCheck size={16} />
@@ -193,18 +178,13 @@ export default function ChatWindow({
                   </div>
                 ) : (
                   <div className={`sp-msg sp-msg--${m.from}`}>
-<<<<<<< HEAD
                     <div className={`sp-bubble ${m.status === 'failed' ? 'sp-bubble--failed' : ''}`}>
-=======
-                    <div className="sp-bubble">
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
                       {m.senderName && (
                         <span className="sp-bubble__agent">{m.senderName}</span>
                       )}
                       <p>{m.text}</p>
                       <span className="sp-bubble__meta">
                         {hhmm(m.ts)}
-<<<<<<< HEAD
                         {m.from === 'agent' && m.status !== 'failed' && <Ticks status={m.status} />}
                       </span>
                       {m.status === 'failed' && (
@@ -216,10 +196,6 @@ export default function ChatWindow({
                           Yuborilmadi · Qayta yuborish
                         </button>
                       )}
-=======
-                        {m.from === 'agent' && <Ticks status={m.status} />}
-                      </span>
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
                     </div>
                   </div>
                 )}

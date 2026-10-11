@@ -8,7 +8,6 @@ import './support.css'
 
 const CONN = {
   connected: 'Jonli ulangan',
-<<<<<<< HEAD
   polling: 'Har 5 soniyada yangilanadi',
   connecting: 'Ulanmoqda…',
   offline: 'Aloqa yo‘q',
@@ -29,14 +28,6 @@ export default function SupportPage() {
     reload,
     dismissNotice,
   } = useSupportChat()
-=======
-  connecting: 'Ulanmoqda…',
-  reconnecting: 'Qayta ulanmoqda…',
-}
-
-export default function SupportPage() {
-  const { chats, active, connection, select, sendMessage, setStatus } = useSupportChat()
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
   const [infoOpen, setInfoOpen] = useState(() =>
     window.matchMedia('(min-width: 1561px)').matches,
   )
@@ -65,7 +56,6 @@ export default function SupportPage() {
         </div>
       </div>
 
-<<<<<<< HEAD
       {error && (
         <div className="sp-banner" role="alert">
           <span>{error}</span>
@@ -75,32 +65,22 @@ export default function SupportPage() {
         </div>
       )}
 
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
       <div
         className={`sp-grid ${mobileChat ? 'is-chat' : ''} ${infoOpen && active ? 'has-info' : ''
           }`}
       >
-<<<<<<< HEAD
         <ChatList chats={chats} activeId={active?.id} onSelect={open} loading={loading} />
-=======
-        <ChatList chats={chats} activeId={active?.id} onSelect={open} />
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
         <ChatWindow
           chat={active}
           onSend={sendMessage}
           onStatus={setStatus}
-<<<<<<< HEAD
           onRetry={retryMessage}
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
           onBack={() => setMobileChat(false)}
           onToggleInfo={() => setInfoOpen((v) => !v)}
           infoOpen={infoOpen}
         />
         {infoOpen && active && <UserPanel chat={active} onClose={() => setInfoOpen(false)} />}
       </div>
-<<<<<<< HEAD
 
       {notice && (
         <div className="sp-toast" role="status">
@@ -110,8 +90,6 @@ export default function SupportPage() {
           </button>
         </div>
       )}
-=======
->>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
     </div>
   )
 }
