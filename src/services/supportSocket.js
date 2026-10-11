@@ -1,95 +1,115 @@
-/**
- * Support chat uchun real-vaqt WebSocket ulanishi.
- *
- * ---- Server -> Client ----
- * { type: 'message', chatId, message: { id, from, text, ts, sender_name } }
- * { type: 'chat',    chat }
- * { type: 'typing',  chatId, typing: boolean }
- * { type: 'ack',     chatId, messageId, status: 'delivered'|'read' }
- * { type: 'status',  chatId, status, assignee }
- *
- * ---- Client -> Server ----
- * { type: 'message', chatId, id, text }
- * { type: 'status',  chatId, status }
- * { type: 'read',    chatId }
- */
+const MAX_FAILED_ATTEMPTS = 5
+// backend rad etgan kodlar: 4001 — auth yo'q, 4003 — ruxsat yo'q (qayta urinish foydasiz)
+const NO_RETRY_CODES = [4001, 4003]
 
 const getToken = () =>
-    localStorage.getItem('access_token') || localStorage.getItem('token') || ''
+    localStorage.getItem('access_token') ||
+    localStorage.getItem('token') ||
+    ''
+
+const buildUrl = (url) => {
+    const token = getToken()
+    if (!token) return url
+    const sep = url.includes('?') ? '&' : '?'
+    return `${url}${sep}token=${encodeURIComponent(token)}`
+}
 
 export function createSupportSocket({ url, onEvent, onStatus }) {
     if (!url) {
-        console.warn(
-            '[supportSocket] VITE_SUPPORT_WS_URL berilmagan — real-time oʻchirilgan',
-        )
         onStatus?.('disabled')
         return { send() { }, close() { } }
     }
 
-    const token = getToken()
-    const fullUrl = token
-        ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
-        : url
-
-    let ws
+    let ws = null
     let closed = false
     let retry = 0
-    let timer
+    let failures = 0
+    let timer = null
+
+    const scheduleReconnect = () => {
+        if (closed) return
+
+        failures += 1
+        if (failures >= MAX_FAILED_ATTEMPTS) {
+            console.info('[supportSocket] WS ulanmadi, to‘xtatildi (polling ishlaydi)')
+            onStatus?.('disabled')
+            return
+        }
+
+        onStatus?.('reconnecting')
+        retry += 1
+        timer = setTimeout(connect, Math.min(1000 * 2 ** retry, 15000))
+    }
 
     const connect = () => {
         if (closed) return
         onStatus?.(retry ? 'reconnecting' : 'connecting')
 
+        let socket
         try {
-            ws = new WebSocket(fullUrl)
-        } catch (err) {
-            console.error('[supportSocket] WebSocket yaratilmadi:', err)
+            socket = new WebSocket(buildUrl(url))
+        } catch (error) {
+            console.error('[supportSocket] Connection error:', error)
             onStatus?.('error')
+            scheduleReconnect()
             return
         }
+        ws = socket
 
-        ws.onopen = () => {
+        socket.onopen = () => {
             retry = 0
+            failures = 0
             onStatus?.('connected')
         }
 
-        ws.onmessage = (e) => {
+        socket.onmessage = (event) => {
             try {
-                onEvent?.(JSON.parse(e.data))
-            } catch (err) {
-                console.warn('[supportSocket] notoʻgʻri JSON:', e.data, err)
+                onEvent?.(JSON.parse(event.data))
+            } catch (error) {
+                console.warn('[supportSocket] Invalid message:', error)
             }
         }
 
-        ws.onclose = () => {
-            if (closed) return
-            onStatus?.('reconnecting')
-            retry += 1
-            const delay = Math.min(1000 * 2 ** retry, 15000)
-            timer = setTimeout(connect, delay)
+        socket.onclose = (event) => {
+            if (ws !== socket) return
+            if (NO_RETRY_CODES.includes(event.code)) {
+                console.warn('[supportSocket] Backend rad etdi, code =', event.code)
+                onStatus?.('disabled')
+                return
+            }
+            scheduleReconnect()
         }
 
-        ws.onerror = () => {
-            try { ws.close() } catch { /* ignore */ }
+        socket.onerror = () => {
+            try { socket.close() } catch { /* yopilgan bo'lishi mumkin */ }
         }
     }
 
-    connect()
+    // React StrictMode (dev): connect'ni kechiktiramiz, birinchi cleanup bekor qila olsin
+    timer = setTimeout(connect, 0)
 
     return {
         send(payload) {
-            if (ws?.readyState === WebSocket.OPEN) {
-                try {
-                    ws.send(JSON.stringify(payload))
-                } catch (err) {
-                    console.warn('[supportSocket] send error:', err)
-                }
-            }
+            if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload))
         },
         close() {
             closed = true
             clearTimeout(timer)
-            try { ws?.close() } catch { /* ignore */ }
+
+            const socket = ws
+            ws = null
+            if (!socket) return
+
+            socket.onmessage = null
+            socket.onerror = null
+            socket.onclose = null
+
+            if (socket.readyState === WebSocket.CONNECTING) {
+                socket.onopen = () => socket.close()
+            } else {
+                socket.onopen = null
+                try { socket.close() } catch { /* ignore */ }
+            }
         },
     }
 }

@@ -641,6 +641,14 @@ function formatMessage(m, chat) {
   }
 }
 
+function buildSupportWsUrl(ticketId, audience) {
+  const custom = import.meta.env.VITE_SUPPORT_WS_URL
+  const base = custom
+    ? custom.replace(/\/+$/, '')
+    : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/support`
+  return `${base}/${ticketId}/${audience}/`
+}
+
 async function loadTicketList(path, audience, signal) {
   const res = await api(path, { signal })
   if (!res.ok) throw new Error(`${path} (${res.status})`)
@@ -787,69 +795,39 @@ export default function useSupportChat() {
     }
   }, [])
 
-  // 2. WebSocket (bo'lsa) — tezroq yetkazish uchun
+  // 2. WebSocket — faqat ochiq ticket uchun: /ws/support/<ticket_id>/<audience>/
+  const activeChat = state.chats.find((c) => c.id === state.activeId)
+  const wsTicketId = activeChat?.ticketId ?? null
+  const wsAudience = activeChat?.audience ?? null
+
   useEffect(() => {
+    if (!wsTicketId || !wsAudience) {
+      setWsStatus('disabled')
+      return
+    }
+
+    const chatId = `${wsAudience}:${wsTicketId}`
     const socket = createSupportSocket({
-      url: import.meta.env.VITE_SUPPORT_WS_URL,
+      url: buildSupportWsUrl(wsTicketId, wsAudience),
       onStatus: setWsStatus,
       onEvent: (e) => {
-        if (!e || !e.type) return
-        const known = findChat(e.chatId, e.audience)
-        const chatId = known?.id ?? null
+        // backend: {"type": "connected", ...} yoki xabar:
+        // {id, sender_id, sender_name, audience, content, created_at, is_read}
+        if (!e || e.type === 'connected') return
+        if (e.id == null || e.content == null) return
 
-        switch (e.type) {
-          case 'message':
-            if (chatId)
-              dispatch({
-                type: 'incoming',
-                chatId,
-                message: formatMessage(e.message, known),
-              })
-            break
-
-          case 'chat': {
-            const chat = formatChat(e.chat, e.audience || 'consumer')
-            if (chat) dispatch({ type: 'newChat', chat })
-            break
-          }
-
-          case 'typing':
-            if (chatId) dispatch({ type: 'typing', chatId, typing: !!e.typing })
-            break
-
-          case 'ack':
-            if (chatId)
-              dispatch({
-                type: 'ack',
-                chatId,
-                messageId: toId(e.messageId),
-                status: e.status,
-              })
-            break
-
-          case 'status':
-            if (chatId)
-              dispatch({
-                type: 'status',
-                chatId,
-                status: normalizeStatus(e.status),
-                assignee: e.assignee,
-                silent: true,
-              })
-            break
-
-          default:
-            break
-        }
+        const chat = chatsRef.current.find((c) => c.id === chatId)
+        if (!chat) return
+        dispatch({ type: 'incoming', chatId, message: formatMessage(e, chat) })
       },
     })
 
     socketRef.current = socket
     return () => {
       socketRef.current = null
-      socket?.close?.()
+      socket.close()
     }
-  }, [])
+  }, [wsTicketId, wsAudience])
 
   // 3. Ochiq chat xabarlarini har 2.5 soniyada yangilash
   useEffect(() => {
