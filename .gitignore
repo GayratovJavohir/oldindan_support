@@ -30,3 +30,5 @@ dist-ssr
 !.env.example
 =======
 >>>>>>> 101c5fa9d1643c85eb07cae0e2202472cb7f4066
+
+.env
